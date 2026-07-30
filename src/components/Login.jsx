@@ -23,7 +23,7 @@ export default function Login({ onSignedIn }) {
     <main className="login">
       <div className="login__mark" aria-hidden="true" />
       <h1 className="login__title">loml</h1>
-      <p className="login__sub">Two people, one long conversation.</p>
+      <p className="login__sub">Two people, one story.</p>
 
       <label className="field">
         <span className="field__label">Access key</span>

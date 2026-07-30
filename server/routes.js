@@ -102,8 +102,10 @@ router.get('/me', async (req, res) => {
 
 /* -------------------------------------------------------------- questions */
 
+const SHARE_KINDS = ['question', 'memory', 'note'];
+
 const QUESTION_SELECT = `
-  SELECT q.id, q.title, q.detail, q.status, q.version, q.created_at, q.updated_at,
+  SELECT q.id, q.kind, q.title, q.detail, q.status, q.version, q.created_at, q.updated_at,
          q.asker_id, q.recipient_id,
          asker.display_name  AS asker_name,
          recip.display_name  AS recipient_name,
@@ -141,6 +143,7 @@ function shapeQuestion(row, attachments) {
   const rAtt = attachments.filter((a) => row.response_id && a.response_id === row.response_id);
   return {
     id: row.id,
+    kind: row.kind || 'question',
     title: row.title,
     detail: row.detail,
     status: row.status,
@@ -189,7 +192,8 @@ router.get('/questions', requireUser, async (req, res) => {
 router.post('/questions', requireUser, async (req, res) => {
   const title = (req.body?.title || '').trim();
   const detail = (req.body?.detail || '').trim();
-  if (!title) return res.status(400).json({ error: 'Give the question a title.' });
+  const kind = SHARE_KINDS.includes(req.body?.kind) ? req.body.kind : 'question';
+  if (!title) return res.status(400).json({ error: 'Give it a title.' });
 
   const partner = await partnerOf(req.user.id);
   if (!partner) return res.status(500).json({ error: 'No partner profile found.' });
@@ -198,9 +202,9 @@ router.post('/questions', requireUser, async (req, res) => {
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `INSERT INTO question (asker_id, recipient_id, title, detail)
-       VALUES ($1, $2, $3, $4) RETURNING id`,
-      [req.user.id, partner.id, title, detail]
+      `INSERT INTO question (asker_id, recipient_id, kind, title, detail)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [req.user.id, partner.id, kind, title, detail]
     );
     const id = rows[0].id;
     await client.query(
@@ -209,7 +213,7 @@ router.post('/questions', requireUser, async (req, res) => {
       [id, title, detail, req.user.id]
     );
     await client.query('COMMIT');
-    await logActivity(req.user.id, 'asked_question', 'question', id, { title });
+    await logActivity(req.user.id, 'shared', 'question', id, { title, kind });
     res.status(201).json({ id });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -223,16 +227,16 @@ router.post('/questions', requireUser, async (req, res) => {
 router.patch('/questions/:id', requireUser, async (req, res) => {
   const title = (req.body?.title || '').trim();
   const detail = (req.body?.detail || '').trim();
-  if (!title) return res.status(400).json({ error: 'Give the question a title.' });
+  if (!title) return res.status(400).json({ error: 'Give it a title.' });
 
   const { rows } = await query('SELECT * FROM question WHERE id = $1 AND is_removed = false', [
     req.params.id,
   ]);
   const q = rows[0];
-  if (!q) return res.status(404).json({ error: 'Question not found.' });
-  if (q.asker_id !== req.user.id) return res.status(403).json({ error: 'This is not your question.' });
+  if (!q) return res.status(404).json({ error: 'Not found.' });
+  if (q.asker_id !== req.user.id) return res.status(403).json({ error: 'This is not yours.' });
   if (q.status === 'answered')
-    return res.status(409).json({ error: 'This one has been answered, so it is locked.' });
+    return res.status(409).json({ error: "This one's already resolved, so it's locked." });
 
   const nextVersion = q.version + 1;
   const client = await pool.connect();
@@ -311,14 +315,14 @@ router.post('/questions/:id/response', requireUser, async (req, res) => {
   const q = rows[0];
   if (!q) return res.status(404).json({ error: 'Question not found.' });
   if (q.recipient_id !== req.user.id)
-    return res.status(403).json({ error: 'This question was not asked of you.' });
+    return res.status(403).json({ error: "This wasn't shared with you." });
 
   const existing = await query(
     'SELECT id FROM response WHERE question_id = $1 AND is_removed = false',
     [q.id]
   );
   if (existing.rows[0])
-    return res.status(409).json({ error: 'This one already has an answer. Edit it instead.' });
+    return res.status(409).json({ error: 'This already has a reply. Edit it instead.' });
 
   const client = await pool.connect();
   try {
@@ -394,10 +398,10 @@ router.post('/attachments', requireUser, upload.single('file'), async (req, res)
       questionId,
     ]);
     const q = rows[0];
-    if (!q) return res.status(404).json({ error: 'Question not found.' });
-    if (q.asker_id !== req.user.id) return res.status(403).json({ error: 'This is not your question.' });
+    if (!q) return res.status(404).json({ error: 'Not found.' });
+    if (q.asker_id !== req.user.id) return res.status(403).json({ error: 'This is not yours.' });
     if (q.status === 'answered')
-      return res.status(409).json({ error: 'This one has been answered, so it is locked.' });
+      return res.status(409).json({ error: "This one's already resolved, so it's locked." });
   } else {
     const { rows } = await query('SELECT * FROM response WHERE id = $1 AND is_removed = false', [
       responseId,

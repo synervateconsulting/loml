@@ -12,13 +12,17 @@ CREATE TABLE IF NOT EXISTS app_user (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- A "share" is a question, a memory or a note. Questions get answered;
+-- memories and notes get acknowledged (an optional reply). The table keeps its
+-- historical `question` name; the `kind` column carries the distinction.
 CREATE TABLE IF NOT EXISTS question (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   asker_id      INTEGER NOT NULL REFERENCES app_user(id),
   recipient_id  INTEGER NOT NULL REFERENCES app_user(id),
+  kind          TEXT NOT NULL DEFAULT 'question', -- 'question' | 'memory' | 'note'
   title         TEXT NOT NULL,
   detail        TEXT NOT NULL DEFAULT '',
-  status        TEXT NOT NULL DEFAULT 'open',   -- 'open' | 'answered'
+  status        TEXT NOT NULL DEFAULT 'open',   -- 'open' | 'answered' (answered == acknowledged)
   version       INTEGER NOT NULL DEFAULT 1,
   is_removed    BOOLEAN NOT NULL DEFAULT false, -- soft delete only
   removed_at    TIMESTAMPTZ,
@@ -26,6 +30,15 @@ CREATE TABLE IF NOT EXISTS question (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Backfill for databases created before `kind` existed. Idempotent on boot.
+ALTER TABLE question ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'question';
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'question_kind_check') THEN
+    ALTER TABLE question
+      ADD CONSTRAINT question_kind_check CHECK (kind IN ('question', 'memory', 'note'));
+  END IF;
+END $$;
 
 -- One row per saved state of a question, including the original.
 CREATE TABLE IF NOT EXISTS question_version (
