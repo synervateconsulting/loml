@@ -1,12 +1,17 @@
 import { AttachmentBadge } from './Media.jsx';
+import { kindLabel, kindOf } from '../shares.js';
 
 const shortDate = (value) =>
   new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
 function QuestionCard({ question, actionLabel, onAction, seal }) {
+  // actionLabel may be a plain string or a function of the share (so a section
+  // can show "Respond" for a question and "Acknowledge" for a memory/note).
+  const label = typeof actionLabel === 'function' ? actionLabel(question) : actionLabel;
   return (
     <article className={`card card--${seal}`}>
       <span className={`seal seal--${seal}`} aria-hidden="true" />
+      <span className={`kindtag kindtag--${kindOf(question)}`}>{kindLabel(question)}</span>
       <h3 className="card__title">{question.title}</h3>
       {question.detail && <p className="card__detail">{question.detail}</p>}
       <div className="card__foot">
@@ -15,7 +20,7 @@ function QuestionCard({ question, actionLabel, onAction, seal }) {
           <AttachmentBadge count={question.attachments.length} />
         </span>
         <button type="button" className="btn btn--small" onClick={() => onAction(question)}>
-          {actionLabel}
+          {label}
         </button>
       </div>
     </article>

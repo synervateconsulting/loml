@@ -20,7 +20,7 @@ export const api = {
   login: (accessKey) => request('POST', '/login', { accessKey }),
   logout: () => request('POST', '/logout'),
   questions: () => request('GET', '/questions'),
-  ask: (title, detail) => request('POST', '/questions', { title, detail }),
+  ask: (title, detail, kind = 'question') => request('POST', '/questions', { title, detail, kind }),
   editQuestion: (id, title, detail) => request('PATCH', `/questions/${id}`, { title, detail }),
   removeQuestion: (id) => request('POST', `/questions/${id}/remove`),
   answer: (questionId, body) => request('POST', `/questions/${questionId}/response`, { body }),

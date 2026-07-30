@@ -182,9 +182,18 @@ body::before {
 }
 
 .section__count {
-  font-size: 11.5px;
-  color: var(--muted);
-  opacity: 0.7;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(240, 178, 107, 0.18);
+  color: var(--candle);
+  font: 700 15px var(--body);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
 .empty {
@@ -263,6 +272,68 @@ body::before {
   font-size: 11.5px;
   color: var(--muted);
   opacity: 0.85;
+}
+
+/* ------------------------------------------------------------ share type */
+
+.kindtag {
+  display: inline-block;
+  font: 600 10px var(--body);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  color: var(--muted);
+  margin-bottom: 9px;
+}
+
+.kindtag--question {
+  color: var(--candle);
+  border-color: rgba(240, 178, 107, 0.4);
+}
+
+.kindtag--memory {
+  color: var(--rose);
+  border-color: rgba(232, 135, 155, 0.4);
+}
+
+.segmented {
+  display: flex;
+  gap: 4px;
+  background: var(--night-2);
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  padding: 4px;
+}
+
+.segmented__opt {
+  flex: 1;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  font: 500 13px var(--body);
+  padding: 9px 10px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.segmented__opt.is-active {
+  background: var(--candle);
+  color: #2a1409;
+  font-weight: 600;
+}
+
+.segmented__opt:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.segmented__opt:focus-visible {
+  outline: 2px solid var(--rose);
+  outline-offset: 2px;
 }
 
 .badge {

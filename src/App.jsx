@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './api.js';
+import { actionLabel } from './shares.js';
 import Login from './components/Login.jsx';
 import QuestionSection from './components/QuestionList.jsx';
-import { AskModal, RespondModal, EditQuestionModal, ViewModal } from './components/Modals.jsx';
+import { ShareModal, RespondModal, EditQuestionModal, ViewModal } from './components/Modals.jsx';
 
 const firstName = (name = '') => name.split(' ')[0];
 
@@ -76,8 +77,8 @@ export default function App() {
             Sign out
           </button>
         </div>
-        <button type="button" className="btn btn--primary btn--wide" onClick={() => setModal({ kind: 'ask' })}>
-          Ask {partner} a question
+        <button type="button" className="btn btn--primary btn--wide" onClick={() => setModal({ kind: 'share' })}>
+          Share something
         </button>
         <nav className="tabs" role="tablist">
           <button
@@ -87,7 +88,7 @@ export default function App() {
             className={`tab ${tab === 'theirs' ? 'is-active' : ''}`}
             onClick={() => setTab('theirs')}
           >
-            {partner}’s questions
+            {partner}’s shares
             {theirsOpen.length > 0 && <span className="dot" aria-label="waiting on you" />}
           </button>
           <button
@@ -97,7 +98,7 @@ export default function App() {
             className={`tab ${tab === 'mine' ? 'is-active' : ''}`}
             onClick={() => setTab('mine')}
           >
-            My questions
+            My shares
           </button>
         </nav>
       </header>
@@ -113,14 +114,14 @@ export default function App() {
               count={theirsOpen.length}
               empty={`Nothing from ${partner} right now.`}
               questions={theirsOpen}
-              actionLabel="Respond"
+              actionLabel={actionLabel}
               onAction={(q) => setModal({ kind: 'respond', question: q })}
             />
             <QuestionSection
-              heading="Answered"
+              heading="Acknowledged"
               seal="done"
               count={theirsDone.length}
-              empty="Your answers will collect here."
+              empty="What you've handled collects here."
               questions={theirsDone}
               actionLabel="View"
               onAction={(q) => setModal({ kind: 'view', question: q, canEditAnswer: true })}
@@ -132,16 +133,16 @@ export default function App() {
               heading={`Waiting on ${partner}`}
               seal="pending"
               count={mineOpen.length}
-              empty="Nothing out there yet. Ask something."
+              empty="Nothing out there yet. Share something."
               questions={mineOpen}
               actionLabel="Edit"
               onAction={(q) => setModal({ kind: 'edit', question: q })}
             />
             <QuestionSection
-              heading="Answered"
+              heading="Acknowledged"
               seal="done"
               count={mineDone.length}
-              empty={`Once ${partner} answers, it lands here.`}
+              empty={`Once ${partner} responds, it lands here.`}
               questions={mineDone}
               actionLabel="View"
               onAction={(q) => setModal({ kind: 'view', question: q, canEditAnswer: false })}
@@ -150,7 +151,7 @@ export default function App() {
         )}
       </main>
 
-      {modal?.kind === 'ask' && <AskModal partnerName={partner} onClose={close} onDone={finish} />}
+      {modal?.kind === 'share' && <ShareModal partnerName={partner} onClose={close} onDone={finish} />}
       {modal?.kind === 'respond' && (
         <RespondModal question={modal.question} onClose={close} onDone={finish} />
       )}
