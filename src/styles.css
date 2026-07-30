@@ -542,6 +542,159 @@ body::before {
   color: var(--muted);
 }
 
+/* ----------------------------------------------------------- media capture */
+
+.capture {
+  display: grid;
+  gap: 12px;
+}
+
+.capture__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  appearance: none;
+  background: var(--card-lift);
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  color: var(--cream);
+  font: 500 13px var(--body);
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.chip:active {
+  transform: scale(0.98);
+}
+
+.chip:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--rose);
+  outline-offset: 2px;
+}
+
+.capture__live {
+  display: grid;
+  gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.capture__preview {
+  width: 100%;
+  border-radius: 8px;
+  background: #000;
+  display: block;
+  transform: scaleX(-1); /* mirror the selfie view while recording */
+}
+
+.capture__liverow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.capture__rec {
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  background: var(--danger);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+.capture__timer {
+  font: 600 15px var(--body);
+  font-variant-numeric: tabular-nums;
+  color: var(--cream);
+}
+
+.capture__label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.capture__liveactions {
+  display: flex;
+  gap: 10px;
+}
+
+.capture__liveactions .btn {
+  flex: 1;
+}
+
+.staged {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.staged__item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.staged__kind {
+  color: var(--candle);
+  font-size: 16px;
+}
+
+.staged__audio,
+.staged__video,
+.staged__image {
+  grid-column: 1 / -1;
+  width: 100%;
+  border-radius: 8px;
+  display: block;
+}
+
+.staged__meta {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.staged__name {
+  color: var(--cream);
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staged__size {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
 /* ---------------------------------------------------------------- confirm */
 
 .confirm {

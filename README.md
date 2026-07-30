@@ -3,8 +3,10 @@
 A private question-and-answer app for two people. One of you asks, the other
 answers, and the whole exchange stays in one place.
 
-Phase 1 is text only. The database, upload endpoints and media playback are
-already built for audio and video, so adding recording later is front-end work.
+Text, plus audio, video, image and file attachments. Media can be uploaded or
+recorded in the browser (`MediaRecorder`) and attached to a question or an
+answer; it stores as `bytea` in Postgres and streams back from
+`/api/attachments/:id`.
 
 ## Stack
 
@@ -90,9 +92,14 @@ npm run dev:client                     # UI on :5173, proxies to :3000
 | GET | `/api/attachments/:id` | streams the file |
 | POST | `/api/attachments/:id/remove` | flags it, keeps it |
 
-## Next
+## Media capture
 
-Recording and upload in the browser: `MediaRecorder` for audio and video,
-posted to `/api/attachments` with the returned id attached to the question or
-response. The player components in `src/components/Media.jsx` already handle
-audio, video and images.
+`src/components/MediaCapture.jsx` stages outgoing media — an uploaded file or a
+`MediaRecorder` take — and the modals in `src/components/Modals.jsx` upload each
+staged item to `/api/attachments` once the question or answer is saved and has
+an id. Playback lives in `src/components/Media.jsx`. The upload cap is
+`MAX_UPLOAD_MB` (default 60).
+
+Media attaches to a question in the **Ask** and **Edit** modals, and to an
+answer in the **Respond** modal and when viewing your own answer. Question
+attachments lock once the question is answered, matching the API.
