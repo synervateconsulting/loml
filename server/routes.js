@@ -30,6 +30,51 @@ function mediaKindFor(mime = '') {
   return 'file';
 }
 
+// Browsers sometimes hand us a useless Content-Type for a recorded blob
+// (empty, octet-stream, or even text/plain), which would strand a real video
+// as a download link. When the mime is generic we fall back to the extension.
+const GENERIC_MIME = new Set(['', 'text/plain', 'application/octet-stream', 'binary/octet-stream']);
+
+const EXT_MEDIA = {
+  webm: ['video', 'video/webm'], // audio-only .webm normally arrives correctly tagged
+  mp4: ['video', 'video/mp4'],
+  m4v: ['video', 'video/mp4'],
+  mov: ['video', 'video/quicktime'],
+  ogv: ['video', 'video/ogg'],
+  m4a: ['audio', 'audio/mp4'],
+  mp3: ['audio', 'audio/mpeg'],
+  wav: ['audio', 'audio/wav'],
+  aac: ['audio', 'audio/aac'],
+  oga: ['audio', 'audio/ogg'],
+  ogg: ['audio', 'audio/ogg'],
+  opus: ['audio', 'audio/ogg'],
+  weba: ['audio', 'audio/webm'],
+  jpg: ['image', 'image/jpeg'],
+  jpeg: ['image', 'image/jpeg'],
+  png: ['image', 'image/png'],
+  gif: ['image', 'image/gif'],
+  webp: ['image', 'image/webp'],
+  heic: ['image', 'image/heic'],
+};
+
+function guessFromName(name = '') {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  const hit = EXT_MEDIA[ext];
+  return hit ? { kind: hit[0], mime: hit[1] } : null;
+}
+
+const isGeneric = (mime) => GENERIC_MIME.has(mime || '');
+
+// The kind/mime a client should actually use, correcting a generic upload mime
+// against the file name.
+function effectiveMedia({ mime_type, media_kind, file_name }) {
+  const guess = guessFromName(file_name);
+  const mime = isGeneric(mime_type) && guess ? guess.mime : mime_type;
+  let kind = media_kind && media_kind !== 'file' ? media_kind : mediaKindFor(mime);
+  if (kind === 'file' && guess) kind = guess.kind;
+  return { mime, kind };
+}
+
 /* ---------------------------------------------------------------- session */
 
 router.post('/login', async (req, res) => {
@@ -82,7 +127,13 @@ async function attachmentsFor(questionIds, responseIds) {
       ORDER BY created_at`,
     [questionIds, responseIds]
   );
-  return rows;
+  // Correct any generically-typed rows so the client renders the right player.
+  return rows.map((a) => {
+    const { mime, kind } = effectiveMedia(a);
+    return kind === a.media_kind && mime === a.mime_type
+      ? a
+      : { ...a, media_kind: kind, mime_type: mime };
+  });
 }
 
 function shapeQuestion(row, attachments) {
@@ -357,6 +408,14 @@ router.post('/attachments', requireUser, upload.single('file'), async (req, res)
       return res.status(403).json({ error: 'Only the person who answered can attach to it.' });
   }
 
+  // Trust the extension over a generic upload mime so recordings never land as
+  // plain "file" downloads.
+  const { mime, kind } = effectiveMedia({
+    mime_type: req.file.mimetype,
+    media_kind: mediaKindFor(req.file.mimetype),
+    file_name: req.file.originalname,
+  });
+
   const { rows } = await query(
     `INSERT INTO attachment
        (owner_kind, question_id, response_id, uploaded_by, media_kind, mime_type,
@@ -368,8 +427,8 @@ router.post('/attachments', requireUser, upload.single('file'), async (req, res)
       ownerKind === 'question' ? questionId : null,
       ownerKind === 'response' ? responseId : null,
       req.user.id,
-      mediaKindFor(req.file.mimetype),
-      req.file.mimetype,
+      kind,
+      mime || 'application/octet-stream',
       req.file.originalname || null,
       req.file.size,
       durationSecs ? Number(durationSecs) : null,
@@ -397,13 +456,48 @@ router.get('/attachments/:id', requireUser, async (req, res) => {
   if (a.asker_id !== req.user.id && a.recipient_id !== req.user.id)
     return res.status(403).json({ error: 'Not yours to open.' });
 
-  res.setHeader('Content-Type', a.mime_type);
-  res.setHeader('Content-Length', a.byte_size);
+  const bytes = a.bytes; // Buffer straight from bytea
+  const total = bytes.length;
+
+  // Serve a real media type even if this row was stored with a generic one,
+  // so the browser will play it inline rather than treat it as a download.
+  const { mime } = effectiveMedia(a);
+
+  res.setHeader('Content-Type', mime || 'application/octet-stream');
   res.setHeader('Cache-Control', 'private, max-age=3600');
+  // Advertise range support so media elements can stream and seek. iOS Safari
+  // will not play audio/video at all without a 206 answer to its Range request.
+  res.setHeader('Accept-Ranges', 'bytes');
   if (a.file_name) {
     res.setHeader('Content-Disposition', `inline; filename="${a.file_name.replace(/"/g, '')}"`);
   }
-  res.send(a.bytes);
+
+  // A single `bytes=start-end` range, with the usual open-ended and suffix forms.
+  const match = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+  if (match && (match[1] || match[2])) {
+    let start;
+    let end;
+    if (match[1] === '') {
+      // Suffix: the last N bytes.
+      start = Math.max(0, total - Number(match[2]));
+      end = total - 1;
+    } else {
+      start = Number(match[1]);
+      end = match[2] === '' ? total - 1 : Math.min(Number(match[2]), total - 1);
+    }
+    if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= total) {
+      res.setHeader('Content-Range', `bytes */${total}`);
+      return res.status(416).end();
+    }
+    const chunk = bytes.subarray(start, end + 1);
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+    res.setHeader('Content-Length', chunk.length);
+    return res.send(chunk);
+  }
+
+  res.setHeader('Content-Length', total);
+  res.send(bytes);
 });
 
 // Hides the attachment. The bytes stay in the table and stay downloadable.
