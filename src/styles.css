@@ -473,6 +473,30 @@ body::before {
   color: #ffc9c6;
 }
 
+.nudge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: rgba(240, 178, 107, 0.1);
+  border: 1px solid rgba(240, 178, 107, 0.28);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+
+.nudge__text {
+  font-size: 13.5px;
+  color: var(--cream);
+}
+
+.nudge__actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
 /* ------------------------------------------------------------- modal sheet */
 
 .scrim {
