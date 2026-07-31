@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './api.js';
 import { actionLabel } from './shares.js';
+import { pushSupported, permission, enablePush, syncBadge } from './push.js';
 import Login from './components/Login.jsx';
 import QuestionSection from './components/QuestionList.jsx';
 import { ShareModal, RespondModal, EditQuestionModal, ViewModal } from './components/Modals.jsx';
@@ -14,6 +15,8 @@ export default function App() {
   const [tab, setTab] = useState('theirs'); // 'theirs' is the landing tab
   const [modal, setModal] = useState(null);
   const [error, setError] = useState('');
+  const [notif, setNotif] = useState(() => permission()); // default | granted | denied | unsupported
+  const [nudgeHidden, setNudgeHidden] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -36,6 +39,16 @@ export default function App() {
       })
       .finally(() => setLoading(false));
   }, [load]);
+
+  // Keep the app-icon badge equal to what's waiting on you.
+  useEffect(() => {
+    syncBadge(data.received.filter((q) => q.status === 'open').length);
+  }, [data.received]);
+
+  const enableNotifications = async () => {
+    await enablePush();
+    setNotif(permission());
+  };
 
   if (loading) return <div className="boot">…</div>;
 
@@ -104,6 +117,19 @@ export default function App() {
       </header>
 
       <main className="board">
+        {pushSupported() && notif === 'default' && !nudgeHidden && (
+          <div className="nudge">
+            <span className="nudge__text">Get a nudge when {partner} shares something.</span>
+            <div className="nudge__actions">
+              <button type="button" className="linkbtn" onClick={() => setNudgeHidden(true)}>
+                Not now
+              </button>
+              <button type="button" className="btn btn--small btn--primary" onClick={enableNotifications}>
+                Turn on notifications
+              </button>
+            </div>
+          </div>
+        )}
         {error && <p className="notice notice--error">{error}</p>}
 
         {tab === 'theirs' ? (

@@ -119,3 +119,15 @@ CREATE TABLE IF NOT EXISTS activity_log (
 
 CREATE INDEX IF NOT EXISTS question_recipient_idx ON question (recipient_id, status);
 CREATE INDEX IF NOT EXISTS question_asker_idx ON question (asker_id, status);
+
+-- Web push subscriptions. One per browser/device; a person can have several.
+CREATE TABLE IF NOT EXISTS push_subscription (
+  id          BIGSERIAL PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES app_user(id),
+  endpoint    TEXT NOT NULL UNIQUE,
+  p256dh      TEXT NOT NULL,
+  auth        TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS push_sub_user_idx ON push_subscription (user_id);

@@ -2,6 +2,18 @@ import express from 'express';
 import multer from 'multer';
 import { query, keyMatches, logActivity, pool } from './db.js';
 import { startSession, endSession, requireUser, partnerOf } from './auth.js';
+import { publicKey, saveSubscription, notify } from './push.js';
+
+// Copy for the push banners.
+const newShareTitle = (name, kind) =>
+  kind === 'memory'
+    ? `${name} shared a memory`
+    : kind === 'note'
+      ? `${name} left you a note`
+      : `${name} asked you something`;
+
+const replyTitle = (name, kind) =>
+  kind === 'question' ? `${name} answered` : `${name} acknowledged your ${kind}`;
 
 const router = express.Router();
 
@@ -98,6 +110,16 @@ router.post('/logout', (req, res) => {
 router.get('/me', async (req, res) => {
   if (!req.user) return res.json({ me: null, partner: null });
   res.json({ me: publicUser(req.user), partner: publicUser(await partnerOf(req.user.id)) });
+});
+
+/* ------------------------------------------------------------------- push */
+
+router.get('/push/key', (_req, res) => res.json({ key: publicKey() }));
+
+router.post('/push/subscribe', requireUser, async (req, res) => {
+  const ok = await saveSubscription(req.user.id, req.body);
+  if (!ok) return res.status(400).json({ error: 'Bad subscription.' });
+  res.status(201).json({ ok: true });
 });
 
 /* -------------------------------------------------------------- questions */
@@ -214,6 +236,7 @@ router.post('/questions', requireUser, async (req, res) => {
     );
     await client.query('COMMIT');
     await logActivity(req.user.id, 'shared', 'question', id, { title, kind });
+    notify(partner.id, { title: newShareTitle(req.user.display_name, kind), body: title });
     res.status(201).json({ id });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -341,6 +364,7 @@ router.post('/questions/:id/response', requireUser, async (req, res) => {
     ]);
     await client.query('COMMIT');
     await logActivity(req.user.id, 'answered_question', 'response', responseId, { questionId: q.id });
+    notify(q.asker_id, { title: replyTitle(req.user.display_name, q.kind), body: q.title });
     res.status(201).json({ id: responseId });
   } catch (err) {
     await client.query('ROLLBACK');
