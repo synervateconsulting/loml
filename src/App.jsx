@@ -163,10 +163,10 @@ export default function App() {
   ];
 
   const openView = (q, canEditAnswer) => setModal({ kind: 'view', question: q, canEditAnswer });
-  // On "My shares", a reveal you've already answered opens read-only; anything
-  // else is still editable while it waits.
-  const mineOpenLabel = (q) => (isReveal(q) ? 'View' : 'Edit');
-  const mineOpenAction = (q) => (isReveal(q) ? openView(q, false) : setModal({ kind: 'edit', question: q }));
+  // On "My shares", everything unacknowledged is editable — including a reveal
+  // prompt (and your blind answer) while it's still waiting to be revealed.
+  const mineOpenLabel = () => 'Edit';
+  const mineOpenAction = (q) => setModal({ kind: 'edit', question: q });
 
   const signOut = async () => {
     await api.logout();
