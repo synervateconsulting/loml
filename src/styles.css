@@ -906,8 +906,8 @@ body::before {
 
 /* ------------------------------------------------------------- this / that */
 .kindtag--this_that {
-  color: #c9a2ea;
-  border-color: rgba(201, 162, 234, 0.4);
+  color: #e8977c;
+  border-color: rgba(232, 151, 124, 0.4);
 }
 
 /* template picker */
