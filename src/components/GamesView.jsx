@@ -129,21 +129,27 @@ export default function GamesView({
           <p className="games__sub">🔮 Predict My Pick</p>
           <p className="decks__hint">Lock in your real picks — they guess how well they know you.</p>
           <div className="ttsets">
-            {PREDICT_TEMPLATES.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className="ttset"
-                onClick={() => onStartPredict?.({ title: t.name, items: templateToItems(t) })}
-              >
-                <span className="ttset__icon" aria-hidden="true">{t.icon}</span>
-                <span className="ttset__text">
-                  <span className="ttset__name">{t.name}</span>
-                  <span className="ttset__blurb">{t.blurb}</span>
-                </span>
-                <span className="ttset__count">{t.items.length}</span>
-              </button>
-            ))}
+            {PREDICT_TEMPLATES.map((t) => {
+              const played = used.has(`pt:${t.id}`);
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`ttset ${played ? 'is-played' : ''}`}
+                  onClick={() => onStartPredict?.({ title: t.name, items: templateToItems(t), usedKey: `pt:${t.id}` })}
+                >
+                  <span className="ttset__icon" aria-hidden="true">{t.icon}</span>
+                  <span className="ttset__text">
+                    <span className="ttset__name">
+                      {t.name}
+                      {played && <span className="playedtag">Played</span>}
+                    </span>
+                    <span className="ttset__blurb">{t.blurb}</span>
+                  </span>
+                  <span className="ttset__count">{t.items.length}</span>
+                </button>
+              );
+            })}
           </div>
           <button type="button" className="ttset ttset--build" onClick={() => onStartPredict?.({ title: '', items: null })}>
             <span className="ttset__icon" aria-hidden="true">＋</span>
@@ -157,19 +163,25 @@ export default function GamesView({
           <p className="games__sub games__sub--gap">💬 Guess My Answer</p>
           <p className="decks__hint">Answer an open prompt privately — they type a guess, you score it.</p>
           <div className="ttsets">
-            {GUESS_PROMPTS.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                className="ttset"
-                onClick={() => onStartGuess?.({ title: p.text, usedKey: `guess:${p.id}` })}
-              >
-                <span className="ttset__icon" aria-hidden="true">💬</span>
-                <span className="ttset__text">
-                  <span className="ttset__name ttset__name--prompt">{p.text}</span>
-                </span>
-              </button>
-            ))}
+            {GUESS_PROMPTS.map((p) => {
+              const played = used.has(`guess:${p.id}`);
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={`ttset ${played ? 'is-played' : ''}`}
+                  onClick={() => onStartGuess?.({ title: p.text, usedKey: `guess:${p.id}` })}
+                >
+                  <span className="ttset__icon" aria-hidden="true">💬</span>
+                  <span className="ttset__text">
+                    <span className="ttset__name ttset__name--prompt">
+                      {p.text}
+                      {played && <span className="playedtag">Played</span>}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
           </div>
           <button type="button" className="ttset ttset--build" onClick={() => onStartGuess?.({ title: '' })}>
             <span className="ttset__icon" aria-hidden="true">＋</span>
