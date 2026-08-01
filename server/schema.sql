@@ -37,6 +37,7 @@ ALTER TABLE question DROP CONSTRAINT IF EXISTS question_kind_check;
 ALTER TABLE question
   ADD CONSTRAINT question_kind_check CHECK (kind IN ('question', 'memory', 'note', 'song', 'reveal'));
 ALTER TABLE question ADD COLUMN IF NOT EXISTS link TEXT;                              -- 'song' shares
+ALTER TABLE question ADD COLUMN IF NOT EXISTS artist TEXT;                            -- 'song' shares
 ALTER TABLE question ADD COLUMN IF NOT EXISTS is_keepsake BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE question ADD COLUMN IF NOT EXISTS seen_at TIMESTAMPTZ;                    -- recipient saw the share
 ALTER TABLE question ADD COLUMN IF NOT EXISTS seen_by INTEGER REFERENCES app_user(id);

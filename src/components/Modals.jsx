@@ -10,7 +10,7 @@ const COMPOSE = {
   question: { title: 'Ask a question', label: 'Question', placeholder: 'What do you want to ask?', send: 'Send question' },
   memory: { title: 'Share a memory', label: 'Memory', placeholder: 'What do you want to remember together?', send: 'Share memory' },
   note: { title: 'Leave a note', label: 'Note', placeholder: "What's on your mind?", send: 'Send note' },
-  song: { title: 'Share a song', label: 'Song', placeholder: 'Song and artist', send: 'Send song' },
+  song: { title: 'Share a song', label: 'Song', placeholder: 'Song title', send: 'Send song' },
   reveal: { title: 'Answer together', label: 'The prompt', placeholder: 'Something you’ll both answer', send: 'Send prompt' },
 };
 
@@ -136,12 +136,15 @@ const removeAttachmentSteps = [
   { title: 'Certain?', body: 'One more tap and it comes off this share.', confirm: 'Yes, remove', tone: 'danger' },
 ];
 
-function SongLink({ link }) {
+function SongLink({ link, artist }) {
   if (!link) return null;
   return (
     <a className="songlink" href={link} target="_blank" rel="noreferrer">
       <span className="songlink__icon" aria-hidden="true">♪</span>
-      <span className="songlink__host">Open on {hostOf(link)}</span>
+      <span className="songlink__meta">
+        {artist && <span className="songlink__artist">{artist}</span>}
+        <span className="songlink__host">Open on {hostOf(link)}</span>
+      </span>
     </a>
   );
 }
@@ -161,6 +164,7 @@ export function ShareModal({
   const [title, setTitle] = useState(initialTitle);
   const [detail, setDetail] = useState('');
   const [link, setLink] = useState('');
+  const [artist, setArtist] = useState('');
   const [answer, setAnswer] = useState(''); // asker's blind answer for a reveal
   const [spicy, setSpicy] = useState(initialSpicy);
   const [staged, setStaged] = useState([]);
@@ -174,7 +178,8 @@ export function ShareModal({
   const reveal = kind === 'reveal';
   const linkOk = !song || /^https?:\/\//i.test(link.trim());
   const canSend = Boolean(title.trim()) && linkOk && (!reveal || answer.trim()) && !busy;
-  const dirty = Boolean(title.trim() || detail.trim() || link.trim() || answer.trim()) || staged.length > 0;
+  const dirty =
+    Boolean(title.trim() || detail.trim() || link.trim() || artist.trim() || answer.trim()) || staged.length > 0;
   const cancel = () => (dirty ? ask(discardSteps(kind), onClose) : onClose());
 
   const confirmBody = reveal
@@ -196,7 +201,7 @@ export function ShareModal({
             detail,
             kind,
             spicy,
-            ...(song ? { link: link.trim() } : {}),
+            ...(song ? { link: link.trim(), artist: artist.trim() } : {}),
             ...(reveal ? { answer } : {}),
           });
           createdId.current = id;
@@ -268,16 +273,28 @@ export function ShareModal({
         </label>
 
         {song && (
-          <label className="field">
-            <span className="field__label">Link</span>
-            <input
-              className="field__input"
-              value={link}
-              placeholder="https://…  (Spotify, Apple Music, YouTube…)"
-              inputMode="url"
-              onChange={(e) => setLink(e.target.value)}
-            />
-          </label>
+          <>
+            <label className="field">
+              <span className="field__label">Artist</span>
+              <input
+                className="field__input"
+                value={artist}
+                maxLength={200}
+                placeholder="Who's it by?"
+                onChange={(e) => setArtist(e.target.value)}
+              />
+            </label>
+            <label className="field">
+              <span className="field__label">Link</span>
+              <input
+                className="field__input"
+                value={link}
+                placeholder="https://…  (Spotify, Apple Music, YouTube…)"
+                inputMode="url"
+                onChange={(e) => setLink(e.target.value)}
+              />
+            </label>
+          </>
         )}
 
         {reveal ? (
@@ -393,7 +410,7 @@ export function RespondModal({ question, meId, onClose, onDone }) {
         }
       >
         {question.detail && <p className="prose">{question.detail}</p>}
-        {isSong(question) && <SongLink link={question.link} />}
+        {isSong(question) && <SongLink link={question.link} artist={question.artist} />}
         <Attachments items={question.attachments} />
         <Reactions
           targetKind="question"
@@ -435,6 +452,7 @@ export function EditQuestionModal({ question, onClose, onDone }) {
   const [title, setTitle] = useState(question.title);
   const [detail, setDetail] = useState(question.detail);
   const [link, setLink] = useState(question.link || '');
+  const [artist, setArtist] = useState(question.artist || '');
   const [answer, setAnswer] = useState(question.reveal?.myBody || ''); // reveal: your blind answer
   const [staged, setStaged] = useState([]);
   const [error, setError] = useState('');
@@ -446,7 +464,7 @@ export function EditQuestionModal({ question, onClose, onDone }) {
   const textDirty =
     title !== question.title ||
     detail !== question.detail ||
-    (song && link.trim() !== (question.link || '')) ||
+    (song && (link.trim() !== (question.link || '') || artist.trim() !== (question.artist || ''))) ||
     (reveal && answer !== (question.reveal?.myBody || ''));
   const dirty = textDirty || staged.length > 0;
   const cancel = () => (dirty ? ask(discardSteps('edit'), onClose) : onClose());
@@ -458,7 +476,7 @@ export function EditQuestionModal({ question, onClose, onDone }) {
       try {
         if (textDirty && !savedText.current) {
           await api.editQuestion(question.id, title, detail, {
-            ...(song ? { link: link.trim() } : {}),
+            ...(song ? { link: link.trim(), artist: artist.trim() } : {}),
             ...(reveal ? { answer } : {}),
           });
           savedText.current = true;
@@ -509,16 +527,28 @@ export function EditQuestionModal({ question, onClose, onDone }) {
         </label>
 
         {song && (
-          <label className="field">
-            <span className="field__label">Link</span>
-            <input
-              className="field__input"
-              value={link}
-              inputMode="url"
-              placeholder="https://…"
-              onChange={(e) => setLink(e.target.value)}
-            />
-          </label>
+          <>
+            <label className="field">
+              <span className="field__label">Artist</span>
+              <input
+                className="field__input"
+                value={artist}
+                maxLength={200}
+                placeholder="Who's it by?"
+                onChange={(e) => setArtist(e.target.value)}
+              />
+            </label>
+            <label className="field">
+              <span className="field__label">Link</span>
+              <input
+                className="field__input"
+                value={link}
+                inputMode="url"
+                placeholder="https://…"
+                onChange={(e) => setLink(e.target.value)}
+              />
+            </label>
+          </>
         )}
 
         <label className="field">
@@ -718,7 +748,7 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone }) {
         }
       >
         {question.detail && <p className="prose">{question.detail}</p>}
-        {isSong(question) && <SongLink link={question.link} />}
+        {isSong(question) && <SongLink link={question.link} artist={question.artist} />}
         <Attachments items={question.attachments} />
         <Reactions
           targetKind="question"

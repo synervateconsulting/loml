@@ -132,7 +132,7 @@ router.post('/push/subscribe', requireUser, async (req, res) => {
 const SHARE_KINDS = ['question', 'memory', 'note', 'song', 'reveal'];
 
 const QUESTION_SELECT = `
-  SELECT q.id, q.kind, q.title, q.detail, q.link, q.status, q.version,
+  SELECT q.id, q.kind, q.title, q.detail, q.link, q.artist, q.status, q.version,
          q.is_keepsake, q.is_spicy, q.seen_at, q.created_at, q.updated_at,
          q.asker_id, q.recipient_id,
          asker.display_name  AS asker_name,
@@ -226,6 +226,7 @@ function shapeQuestion(row, ctx) {
     title: row.title,
     detail: row.detail,
     link: row.link || null,
+    artist: row.artist || null,
     status: row.status,
     version: row.version,
     isSpicy: row.is_spicy,
@@ -287,6 +288,7 @@ router.post('/questions', requireUser, async (req, res) => {
   const title = (req.body?.title || '').trim();
   const detail = (req.body?.detail || '').trim();
   const link = (req.body?.link || '').trim();
+  const artist = (req.body?.artist || '').trim();
   const revealAnswer = (req.body?.answer || '').trim(); // the asker's own blind answer
   const spicy = Boolean(req.body?.spicy);
   const kind = SHARE_KINDS.includes(req.body?.kind) ? req.body.kind : 'question';
@@ -301,9 +303,9 @@ router.post('/questions', requireUser, async (req, res) => {
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `INSERT INTO question (asker_id, recipient_id, kind, title, detail, link, is_spicy)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-      [req.user.id, partner.id, kind, title, detail, kind === 'song' ? link : null, spicy]
+      `INSERT INTO question (asker_id, recipient_id, kind, title, detail, link, artist, is_spicy)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [req.user.id, partner.id, kind, title, detail, kind === 'song' ? link : null, kind === 'song' ? artist : null, spicy]
     );
     const id = rows[0].id;
     await client.query(
@@ -339,6 +341,7 @@ router.patch('/questions/:id', requireUser, async (req, res) => {
   const title = (req.body?.title || '').trim();
   const detail = (req.body?.detail || '').trim();
   const link = (req.body?.link || '').trim();
+  const artist = (req.body?.artist || '').trim();
   const hasAnswer = typeof req.body?.answer === 'string'; // reveal: edit your blind answer
   const answer = (req.body?.answer || '').trim();
   if (!title) return res.status(400).json({ error: 'Give it a title.' });
@@ -359,8 +362,8 @@ router.patch('/questions/:id', requireUser, async (req, res) => {
   try {
     await client.query('BEGIN');
     await client.query(
-      `UPDATE question SET title = $1, detail = $2, link = $3, version = $4, updated_at = now() WHERE id = $5`,
-      [title, detail, q.kind === 'song' ? link : q.link, nextVersion, q.id]
+      `UPDATE question SET title = $1, detail = $2, link = $3, artist = $4, version = $5, updated_at = now() WHERE id = $6`,
+      [title, detail, q.kind === 'song' ? link : q.link, q.kind === 'song' ? artist : q.artist, nextVersion, q.id]
     );
     await client.query(
       `INSERT INTO question_version (question_id, version, title, detail, edited_by)
