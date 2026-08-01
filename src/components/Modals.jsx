@@ -81,22 +81,44 @@ async function uploadStaged({ staged, setStaged, ownerKind, questionId, response
   }
 }
 
-// Lock the page behind an open sheet so you don't get its scrollbar on top of
-// the sheet's own. Reference-counted so a stacked Confirm doesn't unlock early.
+// Lock the page behind an open sheet. Reference-counted so a stacked Confirm
+// doesn't unlock early.
+//
+// We do NOT use `overflow: hidden` on <html>/<body> for this. On iOS Safari an
+// `overflow: hidden` ancestor CLIPS position:fixed descendants to that
+// ancestor's box — and <body>'s height is the current view's content height.
+// So a modal opened over a short page (e.g. the Upcoming tab) got clipped to
+// where the page content ended and its lower half rendered blank (present and
+// tappable, just not painted); over a tall page (the calendar grid) it was
+// fine. The clip height tracked the page, which is why the blank area's size
+// changed from tab to tab.
+//
+// The fix is the standard position:fixed body technique: take <body> out of
+// flow so the page can't scroll, offset it by the saved scroll position so
+// nothing visually jumps, and — crucially — never set overflow:hidden, so
+// there's no ancestor to clip the fixed sheet.
 let scrollLockCount = 0;
+let savedScrollY = 0;
 function setLocked(on) {
-  // The page scroller is <html> in some browsers and <body> in others — lock both.
-  document.documentElement.classList.toggle('scroll-locked', on);
-  document.body.classList.toggle('scroll-locked', on);
+  const body = document.body;
+  if (on) {
+    savedScrollY = window.scrollY || window.pageYOffset || 0;
+    body.style.position = 'fixed';
+    body.style.top = `-${savedScrollY}px`;
+    body.style.left = '0';
+    body.style.right = '0';
+    body.style.width = '100%';
+  } else {
+    body.style.position = '';
+    body.style.top = '';
+    body.style.left = '';
+    body.style.right = '';
+    body.style.width = '';
+    window.scrollTo(0, savedScrollY);
+  }
 }
 function useScrollLock() {
-  // useLayoutEffect (not useEffect) so the lock is applied BEFORE the browser
-  // paints the sheet. If we locked in useEffect, the first modal would paint
-  // once unlocked, then toggling overflow:hidden on the root afterwards forces
-  // a reflow/repaint that iOS Safari botches — the sheet's lower half stays
-  // unpainted (blank but interactive). Locking pre-paint means one clean paint.
-  // (Opening a modal over an already-open one never hit this: overflow was
-  // already hidden, so there was no net change to reflow.)
+  // useLayoutEffect so the lock is in place before the browser paints the sheet.
   useLayoutEffect(() => {
     if (scrollLockCount === 0) setLocked(true);
     scrollLockCount += 1;
