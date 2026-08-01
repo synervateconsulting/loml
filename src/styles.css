@@ -832,6 +832,522 @@ body::before {
   flex: 1;
 }
 
+/* ---------------------------------------------------------------- spicy --- */
+
+.spicytoggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  appearance: none;
+  background: var(--night-2);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 11px 14px;
+  margin-bottom: 16px;
+  cursor: pointer;
+  color: var(--muted);
+  text-align: left;
+}
+.spicytoggle.is-on {
+  background: rgba(232, 117, 122, 0.16);
+  border-color: rgba(232, 117, 122, 0.45);
+}
+.spicytoggle__label {
+  font: 600 14px var(--body);
+  color: var(--cream);
+}
+.spicytoggle__hint {
+  font-size: 12px;
+}
+.spicytoggle.is-on .spicytoggle__hint {
+  color: var(--danger);
+}
+
+.spicycover {
+  width: 100%;
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  appearance: none;
+  cursor: pointer;
+  background: var(--card);
+  border: 1px dashed var(--edge);
+  border-radius: var(--radius);
+  color: var(--cream);
+  padding: 30px;
+}
+.spicycover__emoji {
+  font-size: 34px;
+  letter-spacing: 2px;
+}
+.spicycover__label {
+  font-family: var(--display);
+  font-size: 18px;
+  font-weight: 600;
+}
+.spicycover__hint {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* ------------------------------------------------- connection pack ------- */
+
+.topbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.iconbtn {
+  appearance: none;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.iconbtn:hover {
+  color: var(--cream);
+}
+.iconbtn:focus-visible {
+  outline: 2px solid var(--rose);
+  outline-offset: 2px;
+}
+
+.thinking {
+  appearance: none;
+  background: rgba(232, 135, 155, 0.14);
+  border: 1px solid rgba(232, 135, 155, 0.32);
+  border-radius: 999px;
+  color: var(--rose);
+  font: 600 12px var(--body);
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+  white-space: nowrap;
+}
+.thinking.is-sent {
+  color: var(--candle);
+  border-color: rgba(240, 178, 107, 0.4);
+  background: rgba(240, 178, 107, 0.14);
+}
+.thinking:disabled {
+  cursor: default;
+}
+
+.topnav {
+  display: flex;
+  gap: 6px;
+  margin-top: 14px;
+}
+.topnav__item {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  color: var(--muted);
+  font: 500 12.5px var(--body);
+  padding: 6px 13px;
+  cursor: pointer;
+}
+.topnav__item.is-active {
+  color: var(--night);
+  background: var(--cream);
+  border-color: var(--cream);
+  font-weight: 600;
+}
+
+.greeting {
+  background: linear-gradient(90deg, rgba(232, 135, 155, 0.18), rgba(240, 178, 107, 0.14));
+  border: 1px solid rgba(232, 135, 155, 0.3);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  color: var(--cream);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+/* countdown ---------------------------------------------------------------- */
+.countdown {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  cursor: pointer;
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  padding: 12px 16px;
+  margin: 4px 0 4px;
+  color: var(--cream);
+}
+.countdown--empty {
+  justify-content: center;
+  color: var(--muted);
+  font: 500 13px var(--body);
+  border-style: dashed;
+}
+.countdown__num {
+  font-family: var(--display);
+  font-size: 34px;
+  font-weight: 600;
+  color: var(--candle);
+  line-height: 1;
+  min-width: 46px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.countdown__body {
+  display: grid;
+  gap: 2px;
+}
+.countdown__title {
+  font-family: var(--display);
+  font-size: 16px;
+}
+.countdown__when {
+  color: var(--cream);
+  font-size: 12.5px;
+  opacity: 0.85;
+}
+.countdown__sub {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.countdown__sub--live {
+  color: var(--candle);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* segmented can wrap now (5 kinds) ---------------------------------------- */
+.segmented--wrap {
+  flex-wrap: wrap;
+}
+.keepfilter {
+  margin-bottom: 14px;
+}
+.segmented--wrap .segmented__opt {
+  flex: 1 1 28%;
+}
+
+.kindtag--song {
+  color: #9ad0c2;
+  border-color: rgba(154, 208, 194, 0.4);
+}
+.kindtag--reveal {
+  color: var(--rose);
+  border-color: rgba(232, 135, 155, 0.4);
+}
+
+/* card extras -------------------------------------------------------------- */
+.card__keep {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1;
+  padding: 4px;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.card__keep:hover {
+  opacity: 1;
+}
+.card__keep.is-kept {
+  color: var(--candle);
+  opacity: 1;
+}
+.card__keep.is-kept:active {
+  transform: scale(0.9);
+}
+.seenmark {
+  color: var(--rose);
+  font-size: 11px;
+  font-weight: 600;
+}
+.seenline {
+  color: var(--rose);
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+
+/* reactions ---------------------------------------------------------------- */
+.reactions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 10px 0 2px;
+}
+.reactions__bar {
+  display: inline-flex;
+  gap: 2px;
+  background: var(--night-2);
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  padding: 3px;
+}
+.reactions__opt {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  font-size: 16px;
+  line-height: 1;
+  padding: 5px 7px;
+  cursor: pointer;
+  opacity: 0.62;
+  transition: opacity 0.12s ease, background 0.12s ease, transform 0.12s ease;
+}
+.reactions__opt:hover {
+  opacity: 1;
+}
+.reactions__opt.is-mine {
+  opacity: 1;
+  background: rgba(232, 135, 155, 0.22);
+  transform: scale(1.06);
+}
+.reactions--readonly {
+  gap: 8px;
+}
+.reactions__label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.reactions__theirs {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+.reactions__badge {
+  font-size: 15px;
+}
+.reactsum {
+  display: inline-flex;
+  gap: 2px;
+}
+.reactsum__badge {
+  font-size: 12px;
+}
+
+/* song link ---------------------------------------------------------------- */
+.songlink {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  background: rgba(154, 208, 194, 0.12);
+  border: 1px solid rgba(154, 208, 194, 0.3);
+  border-radius: 11px;
+  padding: 10px 14px;
+  margin: 4px 0 12px;
+  color: #bfe4da;
+  font-size: 14px;
+  text-decoration: none;
+}
+.songlink__icon {
+  font-size: 17px;
+}
+
+/* reveal ------------------------------------------------------------------- */
+.reveal__pair {
+  margin-bottom: 14px;
+}
+
+/* keepsake star + split footer -------------------------------------------- */
+.keepstar {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  color: var(--muted);
+  font: 600 12.5px var(--body);
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.keepstar.is-kept {
+  color: var(--candle);
+  border-color: rgba(240, 178, 107, 0.45);
+  background: rgba(240, 178, 107, 0.12);
+}
+.sheet__foot--split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+.sheet__foot--right {
+  display: flex;
+  gap: 10px;
+}
+
+/* lists -------------------------------------------------------------------- */
+.lists__new {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.lists__new .field__input {
+  flex: 1;
+}
+.listcard {
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.listcard__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.listcard__title {
+  font-family: var(--display);
+  font-size: 17px;
+  margin: 0;
+  flex: 1;
+}
+.listcard__count {
+  color: var(--candle);
+  font: 700 13px var(--body);
+  font-variant-numeric: tabular-nums;
+}
+.listcard__items {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.listitem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.listitem__check {
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border-radius: 7px;
+  border: 1.5px solid var(--edge);
+  background: var(--night-2);
+  color: var(--candle);
+  font-size: 13px;
+  cursor: pointer;
+}
+.listitem.is-checked .listitem__check {
+  background: rgba(240, 178, 107, 0.2);
+  border-color: rgba(240, 178, 107, 0.5);
+}
+.listitem__text {
+  flex: 1;
+  font-size: 14.5px;
+}
+.listitem.is-checked .listitem__text {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.listitem__x {
+  color: var(--muted);
+  font-size: 18px;
+  text-decoration: none;
+}
+.listcard__add {
+  display: flex;
+  gap: 8px;
+}
+.listcard__add .field__input {
+  flex: 1;
+}
+
+/* decks -------------------------------------------------------------------- */
+.decks__hint {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 12px;
+}
+.deck {
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.deck__head {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--cream);
+  padding: 14px;
+  cursor: pointer;
+  text-align: left;
+}
+.deck__name {
+  font-family: var(--display);
+  font-size: 16px;
+  font-weight: 600;
+}
+.deck__blurb {
+  flex: 1;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.deck__chev {
+  color: var(--muted);
+  font-size: 18px;
+}
+.deck__cards {
+  list-style: none;
+  margin: 0;
+  padding: 0 12px 12px;
+  display: grid;
+  gap: 6px;
+}
+.deck__card {
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  background: var(--night-2);
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  color: var(--cream);
+  font: 500 14px var(--body);
+  padding: 11px 13px;
+  cursor: pointer;
+}
+.deck__card:hover {
+  border-color: rgba(232, 135, 155, 0.4);
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation: none !important;

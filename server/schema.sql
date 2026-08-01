@@ -31,14 +31,16 @@ CREATE TABLE IF NOT EXISTS question (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Backfill for databases created before `kind` existed. Idempotent on boot.
+-- Backfill / extend for older databases. Idempotent on boot.
 ALTER TABLE question ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'question';
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'question_kind_check') THEN
-    ALTER TABLE question
-      ADD CONSTRAINT question_kind_check CHECK (kind IN ('question', 'memory', 'note'));
-  END IF;
-END $$;
+ALTER TABLE question DROP CONSTRAINT IF EXISTS question_kind_check;
+ALTER TABLE question
+  ADD CONSTRAINT question_kind_check CHECK (kind IN ('question', 'memory', 'note', 'song', 'reveal'));
+ALTER TABLE question ADD COLUMN IF NOT EXISTS link TEXT;                              -- 'song' shares
+ALTER TABLE question ADD COLUMN IF NOT EXISTS is_keepsake BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE question ADD COLUMN IF NOT EXISTS seen_at TIMESTAMPTZ;                    -- recipient saw the share
+ALTER TABLE question ADD COLUMN IF NOT EXISTS seen_by INTEGER REFERENCES app_user(id);
+ALTER TABLE question ADD COLUMN IF NOT EXISTS is_spicy BOOLEAN NOT NULL DEFAULT false; -- lives only in the 🔥😈🔥 tab
 
 -- One row per saved state of a question, including the original.
 CREATE TABLE IF NOT EXISTS question_version (
@@ -64,6 +66,9 @@ CREATE TABLE IF NOT EXISTS response (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE response ADD COLUMN IF NOT EXISTS seen_at TIMESTAMPTZ;                    -- asker saw the reply
+ALTER TABLE response ADD COLUMN IF NOT EXISTS seen_by INTEGER REFERENCES app_user(id);
 
 -- At most one live response per question; superseded ones stay in the table.
 CREATE UNIQUE INDEX IF NOT EXISTS response_one_live_per_question
@@ -131,3 +136,92 @@ CREATE TABLE IF NOT EXISTS push_subscription (
 );
 
 CREATE INDEX IF NOT EXISTS push_sub_user_idx ON push_subscription (user_id);
+
+-- A quick tap of feeling on a share or its reply. One live reaction per person
+-- per thing; changing it replaces the old one.
+CREATE TABLE IF NOT EXISTS reaction (
+  id           BIGSERIAL PRIMARY KEY,
+  user_id      INTEGER NOT NULL REFERENCES app_user(id),
+  target_kind  TEXT NOT NULL CHECK (target_kind IN ('question', 'response')),
+  target_id    UUID NOT NULL,
+  emoji        TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (user_id, target_kind, target_id)
+);
+
+CREATE INDEX IF NOT EXISTS reaction_target_idx ON reaction (target_kind, target_id);
+
+-- Blind answers for a 'reveal' share: both people answer, neither sees the
+-- other until both have. One answer per person per prompt.
+CREATE TABLE IF NOT EXISTS reveal_answer (
+  id           BIGSERIAL PRIMARY KEY,
+  question_id  UUID NOT NULL REFERENCES question(id),
+  user_id      INTEGER NOT NULL REFERENCES app_user(id),
+  body         TEXT NOT NULL DEFAULT '',
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (question_id, user_id)
+);
+
+-- Single shared row for the two of you (the countdown, and room to grow).
+CREATE TABLE IF NOT EXISTS couple_state (
+  id               INTEGER PRIMARY KEY DEFAULT 1,
+  countdown_title  TEXT,
+  countdown_date   DATE,
+  countdown_time   TIME,                          -- optional time of day
+  updated_by       INTEGER REFERENCES app_user(id),
+  updated_at       TIMESTAMPTZ,
+  CHECK (id = 1)
+);
+ALTER TABLE couple_state ADD COLUMN IF NOT EXISTS countdown_time TIME;
+INSERT INTO couple_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+-- "Thinking of you" taps. Shown once to the recipient, then marked seen.
+CREATE TABLE IF NOT EXISTS nudge (
+  id          BIGSERIAL PRIMARY KEY,
+  from_id     INTEGER NOT NULL REFERENCES app_user(id),
+  to_id       INTEGER NOT NULL REFERENCES app_user(id),
+  seen        BOOLEAN NOT NULL DEFAULT false,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS nudge_to_idx ON nudge (to_id, seen);
+
+-- Shared checklists (bucket list, watchlist, places...). Nothing hard-deleted.
+CREATE TABLE IF NOT EXISTS list (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title        TEXT NOT NULL,
+  created_by   INTEGER NOT NULL REFERENCES app_user(id),
+  is_removed   BOOLEAN NOT NULL DEFAULT false,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS list_item (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  list_id      UUID NOT NULL REFERENCES list(id),
+  text         TEXT NOT NULL,
+  created_by   INTEGER NOT NULL REFERENCES app_user(id),
+  checked_by   INTEGER REFERENCES app_user(id),
+  checked_at   TIMESTAMPTZ,
+  is_removed   BOOLEAN NOT NULL DEFAULT false,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS list_item_list_idx ON list_item (list_id);
+
+-- Keepsakes are now per-person: each of you keeps your own. A share can be kept
+-- by one, both, or neither.
+CREATE TABLE IF NOT EXISTS keepsake (
+  user_id      INTEGER NOT NULL REFERENCES app_user(id),
+  question_id  UUID NOT NULL REFERENCES question(id),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, question_id)
+);
+
+CREATE INDEX IF NOT EXISTS keepsake_q_idx ON keepsake (question_id);
+
+-- One-time migration: the old shared flag becomes a keepsake for both people,
+-- then the flag is cleared so this never runs twice.
+INSERT INTO keepsake (user_id, question_id)
+  SELECT u.id, q.id FROM question q CROSS JOIN app_user u WHERE q.is_keepsake = true
+  ON CONFLICT DO NOTHING;
+UPDATE question SET is_keepsake = false WHERE is_keepsake = true;
