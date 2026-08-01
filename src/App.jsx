@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './api.js';
-import { actionLabel, isReveal, isThisThat } from './shares.js';
+import { actionLabel, isReveal, isThisThat, isPickGame, isGuess } from './shares.js';
 import { pushSupported, permission, enablePush, syncBadge, clearDeliveredNotifications } from './push.js';
 import { eventIcon } from './calendar.js';
 import Login from './components/Login.jsx';
@@ -34,6 +34,7 @@ export default function App() {
   const [couple, setCouple] = useState(null);
   const [calendar, setCalendar] = useState({ events: [], notifications: { needsAck: [], acknowledged: [] } });
   const [usedGames, setUsedGames] = useState([]);
+  const [knowingPoints, setKnowingPoints] = useState(0);
   const [tab, setTab] = useState('theirs');
   const [view, setView] = useState('shares');
   const [modal, setModal] = useState(null);
@@ -58,6 +59,7 @@ export default function App() {
       setCouple(coupleState);
       setCalendar(cal);
       setUsedGames(used?.keys || []);
+      setKnowingPoints(used?.knowingPoints || 0);
       setError('');
     } catch (err) {
       setError(err.message);
@@ -179,9 +181,10 @@ export default function App() {
   // prompt (and your blind answer) while it's still waiting to be revealed.
   // This/That can't be edited once sent — the asker just views their locked
   // picks while waiting. Everything else opens the editor.
-  const mineOpenLabel = (q) => (isThisThat(q) ? 'View' : 'Edit');
+  const gameLike = (q) => isPickGame(q) || isGuess(q);
+  const mineOpenLabel = (q) => (gameLike(q) ? 'View' : 'Edit');
   const mineOpenAction = (q) =>
-    setModal(isThisThat(q) ? { kind: 'view', question: q } : { kind: 'edit', question: q });
+    setModal(gameLike(q) ? { kind: 'view', question: q } : { kind: 'edit', question: q });
 
   const signOut = async () => {
     await api.logout();
@@ -189,22 +192,28 @@ export default function App() {
     setData({ asked: [], received: [] });
     setCalendar({ events: [], notifications: { needsAck: [], acknowledged: [] } });
     setUsedGames([]);
+    setKnowingPoints(0);
     setView('shares');
   };
 
   const usePrompt = (prompt, usedKey) =>
     setModal({ kind: 'share', initialKind: 'reveal', initialTitle: prompt, usedKey: usedKey || null, lockKind: true });
 
-  // Start a This / That composer, optionally prefilled from a template.
-  const startThisThat = ({ title, items, usedKey }) =>
+  // Start a pick-game composer (this_that / predict / wyr), optionally prefilled.
+  const startPick = (initialKind, { title, items, usedKey } = {}) =>
     setModal({
       kind: 'share',
-      initialKind: 'this_that',
+      initialKind,
       initialTitle: title || '',
       initialItems: items || null,
       usedKey: usedKey || null,
       lockKind: true,
     });
+  const startThisThat = (opts) => startPick('this_that', opts);
+  const startPredict = (opts) => startPick('predict', opts);
+  // Start a Guess My Answer composer (open prompt + your real answer).
+  const startGuess = ({ title, usedKey } = {}) =>
+    setModal({ kind: 'share', initialKind: 'guess', initialTitle: title || '', usedKey: usedKey || null, lockKind: true });
 
   // The Theirs/Mine board, reused for both the normal and spicy tabs.
   const renderBoard = (received, asked) => {
@@ -457,7 +466,14 @@ export default function App() {
         {view === 'lists' && <ListsView />}
 
         {view === 'games' && (
-          <GamesView onUsePrompt={usePrompt} onStartThisThat={startThisThat} usedGames={usedGames} />
+          <GamesView
+            onUsePrompt={usePrompt}
+            onStartThisThat={startThisThat}
+            onStartPredict={startPredict}
+            onStartGuess={startGuess}
+            usedGames={usedGames}
+            knowingPoints={knowingPoints}
+          />
         )}
       </main>
 

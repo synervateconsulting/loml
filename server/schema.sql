@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS question (
 ALTER TABLE question ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'question';
 ALTER TABLE question DROP CONSTRAINT IF EXISTS question_kind_check;
 ALTER TABLE question
-  ADD CONSTRAINT question_kind_check CHECK (kind IN ('question', 'memory', 'note', 'song', 'reveal', 'this_that'));
+  ADD CONSTRAINT question_kind_check CHECK (kind IN ('question', 'memory', 'note', 'song', 'reveal', 'this_that', 'predict', 'guess', 'wyr'));
+-- 'guess' shares: after seeing the partner's guess, the author judges it.
+ALTER TABLE question ADD COLUMN IF NOT EXISTS guess_verdict TEXT CHECK (guess_verdict IN ('got_it', 'close', 'missed'));
 ALTER TABLE question ADD COLUMN IF NOT EXISTS link TEXT;                              -- 'song' shares
 ALTER TABLE question ADD COLUMN IF NOT EXISTS artist TEXT;                            -- 'song' shares
 ALTER TABLE question ADD COLUMN IF NOT EXISTS is_keepsake BOOLEAN NOT NULL DEFAULT false;
@@ -182,6 +184,17 @@ CREATE TABLE IF NOT EXISTS thisthat_answer (
   UNIQUE (item_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS thisthat_answer_q_idx ON thisthat_answer (question_id);
+-- Optional one-line "why" per pick, used by Would You Rather.
+ALTER TABLE thisthat_answer ADD COLUMN IF NOT EXISTS note TEXT NOT NULL DEFAULT '';
+
+-- Running "Knowing You" points, one row per scored game (so re-reveals don't
+-- double count). Couple-wide total = SUM(points).
+CREATE TABLE IF NOT EXISTS game_points (
+  question_id  UUID PRIMARY KEY REFERENCES question(id),
+  source       TEXT NOT NULL,   -- 'predict' | 'guess'
+  points       INTEGER NOT NULL DEFAULT 0,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 -- Which game prompts/templates the two of you have already played. Couple-wide
 -- (this app is a single couple), keyed by a stable id like 'deck:playful:2' or

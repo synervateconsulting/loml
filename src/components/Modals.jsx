@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
-import { SHARE_KINDS, kindOf, isQuestion, isReveal, isSong, isThisThat, kindLabel } from '../shares.js';
-import { ThisThatBuilder, ThisThatView, emptyBuilderItems, itemsAreComplete } from './ThisThat.jsx';
+import { SHARE_KINDS, PICK_KINDS, kindOf, isQuestion, isReveal, isSong, isThisThat, isPickGame, isGuess, kindLabel } from '../shares.js';
+import { ThisThatBuilder, ThisThatView, GuessView, emptyBuilderItems, itemsAreComplete } from './ThisThat.jsx';
 import { EVENT_TYPES } from '../calendar.js';
 import Confirm, { discardSteps, sendSteps } from './Confirm.jsx';
 import { Attachments } from './Media.jsx';
@@ -15,6 +15,9 @@ const COMPOSE = {
   song: { title: 'Share a song', label: 'Song', placeholder: 'Song title', send: 'Send song' },
   reveal: { title: 'Answer together', label: 'The prompt', placeholder: 'Something you’ll both answer', send: 'Send prompt' },
   this_that: { title: 'This / That', label: 'Name this set', placeholder: 'e.g. Our foodie face-off', send: 'Send it' },
+  predict: { title: 'Predict My Pick', label: 'Name this set', placeholder: 'e.g. How well do you know me?', send: 'Send it' },
+  wyr: { title: 'Would You Rather', label: 'Name this round', placeholder: 'e.g. Impossible choices', send: 'Send it' },
+  guess: { title: 'Guess My Answer', label: 'The prompt', placeholder: 'Ask something only you’d know…', send: 'Send it' },
 };
 
 const respondCopy = (share) => {
@@ -211,10 +214,12 @@ export function ShareModal({
   const copy = COMPOSE[kind];
   const song = kind === 'song';
   const reveal = kind === 'reveal';
-  const tt = kind === 'this_that';
+  const guess = kind === 'guess';
+  const blind = reveal || guess; // the "your answer" textarea kinds
+  const tt = PICK_KINDS.includes(kind); // this_that / predict / wyr builder
   const linkOk = !song || /^https?:\/\//i.test(link.trim());
   const canSend =
-    Boolean(title.trim()) && linkOk && (!reveal || answer.trim()) && (!tt || itemsAreComplete(items)) && !busy;
+    Boolean(title.trim()) && linkOk && (!blind || answer.trim()) && (!tt || itemsAreComplete(items)) && !busy;
   const itemsDirty = tt && items.some((it) => it.leftLabel.trim() || it.rightLabel.trim() || it.choice);
   const dirty =
     Boolean(title.trim() || detail.trim() || link.trim() || artist.trim() || answer.trim()) || staged.length > 0 || itemsDirty;
@@ -222,13 +227,17 @@ export function ShareModal({
 
   const confirmBody = reveal
     ? 'They answer blind too — you both see each other only once they’ve replied.'
-    : tt
-      ? 'They pick their own sides blind — you both see the results once they’ve answered.'
-      : song
-        ? 'They’ll find it in your shares.'
-        : kind === 'question'
-          ? 'They will see it the next time they open loml.'
-          : 'They will find it under your shares.';
+    : guess
+      ? 'They’ll guess your answer; then you both see it and you score their guess.'
+      : kind === 'predict'
+        ? 'They’ll try to guess your picks — you’ll see how well they know you.'
+        : tt
+          ? 'They pick their own sides blind — you both see the results once they’ve answered.'
+          : song
+            ? 'They’ll find it in your shares.'
+            : kind === 'question'
+              ? 'They will see it the next time they open loml.'
+              : 'They will find it under your shares.';
 
   const send = () =>
     ask(sendSteps(`Send this to ${partnerName}?`, confirmBody), async () => {
@@ -243,7 +252,7 @@ export function ShareModal({
             spicy,
             ...(usedKey ? { usedKey } : {}),
             ...(song ? { link: link.trim(), artist: artist.trim() } : {}),
-            ...(reveal ? { answer } : {}),
+            ...(blind ? { answer } : {}),
             ...(tt
               ? {
                   items: items.map((it) => ({
@@ -350,21 +359,23 @@ export function ShareModal({
           </>
         )}
 
-        {reveal ? (
+        {blind ? (
           <label className="field">
-            <span className="field__label">Your answer (locked in now, hidden until they reply)</span>
+            <span className="field__label">
+              {guess ? 'Your real answer (hidden until they guess)' : 'Your answer (locked in now, hidden until they reply)'}
+            </span>
             <textarea
               className="field__input field__input--area"
               rows={5}
               value={answer}
-              placeholder="Answer it yourself first."
+              placeholder={guess ? 'The true answer — they’ll try to guess it.' : 'Answer it yourself first.'}
               onChange={(e) => setAnswer(e.target.value)}
             />
           </label>
         ) : tt ? (
           <div className="field">
             <span className="field__label">The this-or-thats</span>
-            <ThisThatBuilder items={items} onChange={setItems} disabled={busy} />
+            <ThisThatBuilder items={items} onChange={setItems} disabled={busy} kind={kind} />
           </div>
         ) : (
           <label className="field">
@@ -379,7 +390,7 @@ export function ShareModal({
           </label>
         )}
 
-        {!reveal && !tt && (
+        {!blind && !tt && (
           <div className="field">
             <span className="field__label">Voice, video or a file</span>
             <MediaCapture items={staged} onChange={setStaged} disabled={busy} />
@@ -395,9 +406,12 @@ export function ShareModal({
 /* ------------------------------------------------- respond / acknowledge / answer */
 
 export function RespondModal({ question, meId, onClose, onDone }) {
-  // This / That has its own answer grid.
-  if (isThisThat(question)) {
+  // Pick games (this_that / predict / wyr) and Guess have their own screens.
+  if (isPickGame(question)) {
     return <ThisThatView question={question} meId={meId} onClose={onClose} onDone={onDone} />;
+  }
+  if (isGuess(question)) {
+    return <GuessView question={question} meId={meId} onClose={onClose} onDone={onDone} />;
   }
   const reveal = isReveal(question);
   const copy = respondCopy(question);
@@ -742,8 +756,11 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone }) {
   if (isReveal(question)) {
     return <RevealView question={question} meId={meId} onClose={onClose} />;
   }
-  // This / That gets its stacked-results view.
-  if (isThisThat(question)) {
+  if (isGuess(question)) {
+    return <GuessView question={question} meId={meId} onClose={onClose} onDone={onDone} />;
+  }
+  // Pick games get the stacked-results view.
+  if (isPickGame(question)) {
     return <ThisThatView question={question} meId={meId} onClose={onClose} onDone={onDone} />;
   }
 

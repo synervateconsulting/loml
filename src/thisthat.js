@@ -3,6 +3,18 @@
 // at least MIN_ITEMS; templates carry 5–10.
 export const MIN_ITEMS = 3;
 
+// Prompts for "Guess My Answer": you answer privately, partner guesses.
+export const GUESS_PROMPTS = [
+  { id: 'comfort-food', text: 'What’s my ultimate comfort food?' },
+  { id: 'perfect-day', text: 'Describe my perfect day off in one line.' },
+  { id: 'first-impression', text: 'What did I first think when we met?' },
+  { id: 'secret-talent', text: 'What’s a hidden talent I wish I had?' },
+  { id: 'guilty-pleasure', text: 'What’s my guiltiest pleasure?' },
+  { id: 'dream-trip', text: 'Where would I go if we could leave tomorrow?' },
+  { id: 'love-language', text: 'How do I most like to be shown love?' },
+  { id: 'pet-peeve', text: 'What’s my biggest pet peeve?' },
+];
+
 export const THISTHAT_TEMPLATES = [
   {
     id: 'food',

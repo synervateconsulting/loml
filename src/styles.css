@@ -903,6 +903,106 @@ body::before {
 .games .calpanes {
   margin-bottom: 16px;
 }
+.games__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.games__head .calpanes {
+  margin-bottom: 16px;
+}
+.knowmeter {
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.knowmeter b {
+  color: var(--candle);
+  font-variant-numeric: tabular-nums;
+}
+.games__sub {
+  font-family: var(--display);
+  font-size: 17px;
+  font-weight: 600;
+  margin: 4px 0 2px;
+}
+.games__sub--gap {
+  margin-top: 26px;
+  padding-top: 20px;
+  border-top: 1px solid var(--edge);
+}
+.ttset__name--prompt {
+  font-family: var(--body);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+/* new game badges */
+.kindtag--predict {
+  color: #9fb8e0;
+  border-color: rgba(159, 184, 224, 0.4);
+}
+.kindtag--guess {
+  color: #d99fc4;
+  border-color: rgba(217, 159, 196, 0.4);
+}
+.kindtag--wyr {
+  color: #d7b46b;
+  border-color: rgba(215, 180, 107, 0.4);
+}
+
+/* wyr "why" inputs + reveal notes */
+.ttbuild__why {
+  width: 100%;
+  margin-top: 8px;
+  background: var(--night);
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  color: var(--cream);
+  font-size: 13px;
+  padding: 7px 9px;
+}
+.ttbuild__why:focus {
+  outline: none;
+  border-color: var(--candle);
+}
+.ttwhy {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--night-2);
+  border-radius: 8px;
+}
+.ttwhy__line {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--cream);
+}
+.ttwhy__line + .ttwhy__line {
+  margin-top: 3px;
+}
+.ttwhy__line b {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* guess judging */
+.guessjudge {
+  margin-top: 4px;
+}
+.guessjudge__opts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.guessverdict {
+  font-family: var(--display);
+  font-size: 18px;
+  margin: 4px 0 0;
+}
 
 /* ------------------------------------------------------------- this / that */
 .kindtag--this_that {

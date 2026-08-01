@@ -145,7 +145,11 @@ router.post('/push/subscribe', requireUser, async (req, res) => {
 
 /* -------------------------------------------------------------- questions */
 
-const SHARE_KINDS = ['question', 'memory', 'note', 'song', 'reveal', 'this_that'];
+const SHARE_KINDS = ['question', 'memory', 'note', 'song', 'reveal', 'this_that', 'predict', 'guess', 'wyr'];
+// Kinds built on binary pick items (this_that grid): both answer, reveal when
+// both have. 'predict' = the partner guesses the author's picks; 'wyr' adds a
+// "why" note per pick.
+const PICK_KINDS = ['this_that', 'predict', 'wyr'];
 
 const QUESTION_SELECT = `
   SELECT q.id, q.kind, q.title, q.detail, q.link, q.artist, q.status, q.version,
@@ -217,10 +221,18 @@ async function thisThatItemsFor(questionIds) {
 async function thisThatAnswersFor(questionIds) {
   if (!questionIds.length) return [];
   const { rows } = await query(
-    'SELECT question_id, item_id, user_id, choice FROM thisthat_answer WHERE question_id = ANY($1::uuid[])',
+    'SELECT question_id, item_id, user_id, choice, note FROM thisthat_answer WHERE question_id = ANY($1::uuid[])',
     [questionIds]
   );
   return rows;
+}
+
+async function pointsFor(questionIds) {
+  if (!questionIds.length) return {};
+  const { rows } = await query('SELECT question_id, points FROM game_points WHERE question_id = ANY($1::uuid[])', [
+    questionIds,
+  ]);
+  return Object.fromEntries(rows.map((r) => [r.question_id, r.points]));
 }
 
 async function keepersFor(questionIds) {
@@ -240,9 +252,11 @@ function shapeQuestion(row, ctx) {
   const qAtt = attachments.filter((a) => a.question_id === row.id);
   const rAtt = attachments.filter((a) => row.response_id && a.response_id === row.response_id);
 
-  // This / That: a set of binary items, blind until both answer every item.
+  // Pick games (this_that / predict / wyr): a set of binary items, blind until
+  // both answer every item. For 'predict' the recipient's answers are guesses
+  // at the asker's picks; the "score" is how many matched.
   let thisThat = null;
-  if (row.kind === 'this_that') {
+  if (PICK_KINDS.includes(row.kind)) {
     const items = (thisThatItems || [])
       .filter((it) => it.question_id === row.id)
       .map((it) => ({
@@ -263,14 +277,52 @@ function shapeQuestion(row, ctx) {
       answers.filter((a) => a.user_id === uid).forEach((a) => (m[a.item_id] = a.choice));
       return m;
     };
+    const notesFor = (uid) => {
+      const m = {};
+      answers.filter((a) => a.user_id === uid && a.note).forEach((a) => (m[a.item_id] = a.note));
+      return m;
+    };
+    const askerMap = mapFor(row.asker_id);
+    const recipMap = mapFor(row.recipient_id);
+    const matches = revealed ? items.filter((it) => askerMap[it.id] && askerMap[it.id] === recipMap[it.id]).length : 0;
     thisThat = {
       items,
       revealed,
       iAnswered,
       myAnswers: mapFor(viewerId),
-      askerAnswers: revealed ? mapFor(row.asker_id) : null,
-      recipientAnswers: revealed ? mapFor(row.recipient_id) : null,
+      myNotes: notesFor(viewerId),
+      askerAnswers: revealed ? askerMap : null,
+      recipientAnswers: revealed ? recipMap : null,
+      askerNotes: revealed ? notesFor(row.asker_id) : null,
+      recipientNotes: revealed ? notesFor(row.recipient_id) : null,
+      matches,
+      points: ctx.pointsByQ?.[row.id] ?? null,
       reactions: revealed ? reactionsOn(reactions, 'thisthat', row.id) : [],
+    };
+  }
+
+  // Guess My Answer: the author answers an open prompt; the partner types a
+  // guess. Once the partner guesses, both see both, and the author judges it.
+  let guess = null;
+  if (row.kind === 'guess') {
+    const answers = revealAnswers.filter((a) => a.question_id === row.id);
+    const iAmAsker = viewerId === row.asker_id;
+    const mine = answers.find((a) => a.user_id === viewerId);
+    const byAsker = answers.find((a) => a.user_id === row.asker_id);
+    const byRecip = answers.find((a) => a.user_id === row.recipient_id);
+    const revealed = Boolean(byRecip); // once the guesser has guessed
+    guess = {
+      revealed,
+      iAmAsker,
+      iAnswered: iAmAsker ? true : Boolean(byRecip),
+      prompt: row.title,
+      myBody: mine ? mine.body : '',
+      truthBody: iAmAsker || revealed ? byAsker?.body ?? '' : null,
+      guessBody: revealed ? byRecip?.body ?? '' : null,
+      verdict: row.guess_verdict || null,
+      canJudge: iAmAsker && revealed && !row.guess_verdict,
+      points: ctx.pointsByQ?.[row.id] ?? null,
+      reactions: revealed ? reactionsOn(reactions, 'reveal', row.id) : [],
     };
   }
 
@@ -308,6 +360,7 @@ function shapeQuestion(row, ctx) {
     seenAt: row.seen_at,
     reveal,
     thisThat,
+    guess,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     askerId: row.asker_id,
@@ -343,17 +396,20 @@ router.get('/questions', requireUser, async (req, res) => {
   );
   const qIds = rows.map((r) => r.id);
   const rIds = rows.filter((r) => r.response_id).map((r) => r.response_id);
-  const ttIds = rows.filter((r) => r.kind === 'this_that').map((r) => r.id);
-  const [attachments, reactions, revealAnswers, thisThatItems, thisThatAnswers, keepers, partner] = await Promise.all([
+  const ttIds = rows.filter((r) => PICK_KINDS.includes(r.kind)).map((r) => r.id);
+  const blindIds = rows.filter((r) => r.kind === 'reveal' || r.kind === 'guess').map((r) => r.id);
+  const scoredIds = rows.filter((r) => r.kind === 'predict' || r.kind === 'guess').map((r) => r.id);
+  const [attachments, reactions, revealAnswers, thisThatItems, thisThatAnswers, pointsByQ, keepers, partner] = await Promise.all([
     attachmentsFor(qIds, rIds),
     reactionsFor(qIds, rIds),
-    revealAnswersFor(rows.filter((r) => r.kind === 'reveal').map((r) => r.id)),
+    revealAnswersFor(blindIds),
     thisThatItemsFor(ttIds),
     thisThatAnswersFor(ttIds),
+    pointsFor(scoredIds),
     keepersFor(qIds),
     partnerOf(req.user.id),
   ]);
-  const ctx = { attachments, reactions, revealAnswers, thisThatItems, thisThatAnswers, keepers, viewerId: req.user.id, partnerId: partner?.id };
+  const ctx = { attachments, reactions, revealAnswers, thisThatItems, thisThatAnswers, pointsByQ, keepers, viewerId: req.user.id, partnerId: partner?.id };
   const shaped = rows.map((r) => shapeQuestion(r, ctx));
   res.json({
     asked: shaped.filter((q) => q.askerId === req.user.id),
@@ -374,10 +430,10 @@ router.post('/questions', requireUser, async (req, res) => {
   if (kind === 'song' && !/^https?:\/\//i.test(link))
     return res.status(400).json({ error: 'Paste a link to the song.' });
 
-  // This / That: a set of >=3 binary items; the asker answers their own side
-  // up front (blind), like a reveal.
+  // Pick games (this_that / predict / wyr): >=3 binary items; the asker answers
+  // their own side up front (blind), like a reveal. 'wyr' allows a "why" note.
   let ttItems = null;
-  if (kind === 'this_that') {
+  if (PICK_KINDS.includes(kind)) {
     const raw = Array.isArray(req.body?.items) ? req.body.items : [];
     ttItems = raw.slice(0, 20).map((it) => ({
       leftLabel: String(it?.leftLabel || '').trim().slice(0, 60),
@@ -385,6 +441,7 @@ router.post('/questions', requireUser, async (req, res) => {
       leftIcon: String(it?.leftIcon || '').trim().slice(0, 8),
       rightIcon: String(it?.rightIcon || '').trim().slice(0, 8),
       choice: it?.choice === 'right' ? 'right' : it?.choice === 'left' ? 'left' : null,
+      note: kind === 'wyr' ? String(it?.note || '').trim().slice(0, 200) : '',
     }));
     if (ttItems.length < 3) return res.status(400).json({ error: 'Add at least 3 this-or-thats.' });
     if (ttItems.some((it) => !it.leftLabel || !it.rightLabel))
@@ -392,6 +449,9 @@ router.post('/questions', requireUser, async (req, res) => {
     if (ttItems.some((it) => !it.choice))
       return res.status(400).json({ error: 'Answer every item before sending.' });
   }
+  // Guess My Answer: the asker writes their real answer up front (hidden).
+  if (kind === 'guess' && !revealAnswer)
+    return res.status(400).json({ error: 'Write your real answer first.' });
 
   const partner = await partnerOf(req.user.id);
   if (!partner) return res.status(500).json({ error: 'No partner profile found.' });
@@ -410,15 +470,15 @@ router.post('/questions', requireUser, async (req, res) => {
        VALUES ($1, 1, $2, $3, $4)`,
       [id, title, detail, req.user.id]
     );
-    // For a reveal prompt the asker answers blind up front; the recipient's
-    // answer unlocks both later.
-    if (kind === 'reveal') {
+    // Reveal + Guess: the asker's blind/real answer up front; the recipient's
+    // answer (or guess) unlocks both later.
+    if (kind === 'reveal' || kind === 'guess') {
       await client.query(
         `INSERT INTO reveal_answer (question_id, user_id, body) VALUES ($1, $2, $3)`,
         [id, req.user.id, revealAnswer]
       );
     }
-    if (kind === 'this_that') {
+    if (PICK_KINDS.includes(kind)) {
       for (let i = 0; i < ttItems.length; i++) {
         const it = ttItems[i];
         const { rows: ir } = await client.query(
@@ -427,8 +487,8 @@ router.post('/questions', requireUser, async (req, res) => {
           [id, i, it.leftLabel, it.rightLabel, it.leftIcon, it.rightIcon]
         );
         await client.query(
-          `INSERT INTO thisthat_answer (question_id, item_id, user_id, choice) VALUES ($1, $2, $3, $4)`,
-          [id, ir[0].id, req.user.id, it.choice]
+          `INSERT INTO thisthat_answer (question_id, item_id, user_id, choice, note) VALUES ($1, $2, $3, $4, $5)`,
+          [id, ir[0].id, req.user.id, it.choice, it.note || '']
         );
       }
     }
@@ -779,13 +839,16 @@ router.post('/attachments/:id/restore', requireUser, async (req, res) => {
 router.post('/questions/:id/reveal', requireUser, async (req, res) => {
   const body = (req.body?.body || '').trim();
   const { rows } = await query(
-    "SELECT * FROM question WHERE id = $1 AND is_removed = false AND kind = 'reveal'",
+    "SELECT * FROM question WHERE id = $1 AND is_removed = false AND kind IN ('reveal', 'guess')",
     [req.params.id]
   );
   const q = rows[0];
   if (!q) return res.status(404).json({ error: 'Not found.' });
   if (q.asker_id !== req.user.id && q.recipient_id !== req.user.id)
     return res.status(403).json({ error: "This isn't yours." });
+  const isGuess = q.kind === 'guess';
+  if (isGuess && req.user.id === q.asker_id)
+    return res.status(403).json({ error: 'You wrote this one — wait for their guess.' });
   const existing = await query('SELECT id FROM reveal_answer WHERE question_id = $1 AND user_id = $2', [
     q.id,
     req.user.id,
@@ -816,9 +879,11 @@ router.post('/questions/:id/reveal', requireUser, async (req, res) => {
       other,
       q.is_spicy
         ? discreetReply(req.user.display_name)
-        : revealed
-          ? { title: `${req.user.display_name} answered — it's revealed`, body: q.title }
-          : { title: `${req.user.display_name} wants to answer together`, body: q.title }
+        : isGuess
+          ? { title: `${req.user.display_name} took a guess`, body: q.title }
+          : revealed
+            ? { title: `${req.user.display_name} answered — it's revealed`, body: q.title }
+            : { title: `${req.user.display_name} wants to answer together`, body: q.title }
     );
     res.status(201).json({ ok: true, revealed });
   } catch (err) {
@@ -832,13 +897,16 @@ router.post('/questions/:id/reveal', requireUser, async (req, res) => {
 // Answer a This / That set. Blind until both people have answered every item.
 router.post('/questions/:id/thisthat', requireUser, async (req, res) => {
   const { rows } = await query(
-    "SELECT * FROM question WHERE id = $1 AND is_removed = false AND kind = 'this_that'",
+    "SELECT * FROM question WHERE id = $1 AND is_removed = false AND kind IN ('this_that', 'predict', 'wyr')",
     [req.params.id]
   );
   const q = rows[0];
   if (!q) return res.status(404).json({ error: 'Not found.' });
   if (q.asker_id !== req.user.id && q.recipient_id !== req.user.id)
     return res.status(403).json({ error: "This isn't yours." });
+  // A predict is the author's own picks; only the partner guesses.
+  if (q.kind === 'predict' && req.user.id === q.asker_id)
+    return res.status(403).json({ error: 'You made this one — wait for their guesses.' });
 
   const mine = await query(
     'SELECT count(*)::int AS n FROM thisthat_answer WHERE question_id = $1 AND user_id = $2',
@@ -853,17 +921,18 @@ router.post('/questions/:id/thisthat', requireUser, async (req, res) => {
   for (const a of raw) {
     const itemId = String(a?.itemId || '');
     const choice = a?.choice === 'right' ? 'right' : a?.choice === 'left' ? 'left' : null;
-    if (itemIds.has(itemId) && choice) chosen.set(itemId, choice);
+    const note = q.kind === 'wyr' ? String(a?.note || '').trim().slice(0, 200) : '';
+    if (itemIds.has(itemId) && choice) chosen.set(itemId, { choice, note });
   }
   if (chosen.size !== itemIds.size) return res.status(400).json({ error: 'Answer every item.' });
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    for (const [itemId, choice] of chosen) {
+    for (const [itemId, { choice, note }] of chosen) {
       await client.query(
-        `INSERT INTO thisthat_answer (question_id, item_id, user_id, choice) VALUES ($1, $2, $3, $4)`,
-        [q.id, itemId, req.user.id, choice]
+        `INSERT INTO thisthat_answer (question_id, item_id, user_id, choice, note) VALUES ($1, $2, $3, $4, $5)`,
+        [q.id, itemId, req.user.id, choice, note]
       );
     }
     const { rows: cc } = await client.query(
@@ -872,18 +941,35 @@ router.post('/questions/:id/thisthat', requireUser, async (req, res) => {
     );
     const n = itemIds.size;
     const revealed = cc.length >= 2 && cc.every((r) => r.n >= n);
-    if (revealed)
+    if (revealed) {
       await client.query("UPDATE question SET status = 'answered', updated_at = now() WHERE id = $1", [q.id]);
+      // Predict: award the couple points for each correct guess.
+      if (q.kind === 'predict') {
+        const { rows: mr } = await client.query(
+          `SELECT count(*)::int AS matches FROM thisthat_answer a
+             JOIN thisthat_answer b ON a.item_id = b.item_id AND a.choice = b.choice
+            WHERE a.question_id = $1 AND a.user_id = $2 AND b.user_id = $3`,
+          [q.id, q.asker_id, q.recipient_id]
+        );
+        await client.query(
+          `INSERT INTO game_points (question_id, source, points) VALUES ($1, 'predict', $2)
+           ON CONFLICT (question_id) DO UPDATE SET points = EXCLUDED.points`,
+          [q.id, mr[0].matches]
+        );
+      }
+    }
     await client.query('COMMIT');
-    await logActivity(req.user.id, 'thisthat_answered', 'question', q.id, { revealed });
+    await logActivity(req.user.id, 'thisthat_answered', 'question', q.id, { revealed, kind: q.kind });
     const other = q.asker_id === req.user.id ? q.recipient_id : q.asker_id;
+    const playedWord =
+      q.kind === 'predict' ? 'guessed your picks' : q.kind === 'wyr' ? 'played Would You Rather' : 'played This / That';
     notify(
       other,
       q.is_spicy
         ? discreetReply(req.user.display_name)
         : revealed
           ? { title: `${req.user.display_name} answered — it's revealed`, body: q.title }
-          : { title: `${req.user.display_name} played This / That`, body: q.title }
+          : { title: `${req.user.display_name} ${playedWord}`, body: q.title }
     );
     res.status(201).json({ ok: true, revealed });
   } catch (err) {
@@ -892,6 +978,36 @@ router.post('/questions/:id/thisthat', requireUser, async (req, res) => {
   } finally {
     client.release();
   }
+});
+
+// Author judges the partner's guess for a 'guess' share (got it / close /
+// missed) and the couple earns 2 / 1 / 0 points.
+router.post('/questions/:id/verdict', requireUser, async (req, res) => {
+  const verdict = ['got_it', 'close', 'missed'].includes(req.body?.verdict) ? req.body.verdict : null;
+  if (!verdict) return res.status(400).json({ error: 'Pick a verdict.' });
+  const { rows } = await query(
+    "SELECT * FROM question WHERE id = $1 AND is_removed = false AND kind = 'guess'",
+    [req.params.id]
+  );
+  const q = rows[0];
+  if (!q) return res.status(404).json({ error: 'Not found.' });
+  if (q.asker_id !== req.user.id) return res.status(403).json({ error: 'Only you can judge your answer.' });
+  const guessed = await query(
+    'SELECT 1 FROM reveal_answer WHERE question_id = $1 AND user_id = $2',
+    [q.id, q.recipient_id]
+  );
+  if (!guessed.rows[0]) return res.status(409).json({ error: 'They haven’t guessed yet.' });
+
+  const pts = verdict === 'got_it' ? 2 : verdict === 'close' ? 1 : 0;
+  await query('UPDATE question SET guess_verdict = $1, updated_at = now() WHERE id = $2', [verdict, q.id]);
+  await query(
+    `INSERT INTO game_points (question_id, source, points) VALUES ($1, 'guess', $2)
+     ON CONFLICT (question_id) DO UPDATE SET points = EXCLUDED.points`,
+    [q.id, pts]
+  );
+  await logActivity(req.user.id, 'guess_judged', 'question', q.id, { verdict });
+  notify(q.recipient_id, { title: `${req.user.display_name} scored your guess`, body: q.title });
+  res.json({ ok: true, verdict, points: pts });
 });
 
 /* ---------------------------------------------------------------- keepsakes */
@@ -928,10 +1044,13 @@ router.post('/questions/:id/keepsake', requireUser, async (req, res) => {
 
 /* -------------------------------------------------------------------- games */
 
-// Stable keys of deck prompts / This-That templates the couple has played.
+// Played keys + the shared "Knowing You" points total.
 router.get('/games/used', requireUser, async (_req, res) => {
-  const { rows } = await query('SELECT game_key FROM game_used');
-  res.json({ keys: rows.map((r) => r.game_key) });
+  const [used, pts] = await Promise.all([
+    query('SELECT game_key FROM game_used'),
+    query('SELECT COALESCE(SUM(points), 0)::int AS total FROM game_points'),
+  ]);
+  res.json({ keys: used.rows.map((r) => r.game_key), knowingPoints: pts.rows[0].total });
 });
 
 /* ---------------------------------------------------------------- reactions */
@@ -970,7 +1089,7 @@ router.post('/reactions', requireUser, async (req, res) => {
     const { rows } = await query(
       `SELECT asker_id, recipient_id,
               (SELECT count(*) FROM reveal_answer WHERE question_id = q.id) AS answered
-         FROM question q WHERE id = $1 AND kind = 'reveal' AND is_removed = false`,
+         FROM question q WHERE id = $1 AND kind IN ('reveal', 'guess') AND is_removed = false`,
       [targetId]
     );
     const q = rows[0];
@@ -984,7 +1103,7 @@ router.post('/reactions', requireUser, async (req, res) => {
               (SELECT count(*) FROM thisthat_item WHERE question_id = q.id) AS items,
               (SELECT count(*) FROM thisthat_answer a WHERE a.question_id = q.id AND a.user_id = q.asker_id) AS asker_n,
               (SELECT count(*) FROM thisthat_answer a WHERE a.question_id = q.id AND a.user_id = q.recipient_id) AS recip_n
-         FROM question q WHERE id = $1 AND kind = 'this_that' AND is_removed = false`,
+         FROM question q WHERE id = $1 AND kind IN ('this_that', 'predict', 'wyr') AND is_removed = false`,
       [targetId]
     );
     const q = rows[0];
