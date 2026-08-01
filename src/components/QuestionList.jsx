@@ -57,6 +57,9 @@ function QuestionCard({ question, actionLabel, onAction, seal, meId, onReload })
       <CardStar question={question} onReload={onReload} />
       <span className={`kindtag kindtag--${kindOf(question)}`}>{kindLabel(question)}</span>
       <h3 className="card__title">{question.title}</h3>
+      {kindOf(question) === 'song' && question.artist && (
+        <p className="card__artist">{question.artist}</p>
+      )}
       {question.detail && <p className="card__detail">{question.detail}</p>}
       <div className="card__foot">
         <span className="card__meta">

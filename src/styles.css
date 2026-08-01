@@ -1176,6 +1176,24 @@ body.scroll-locked {
 .songlink__icon {
   font-size: 17px;
 }
+.songlink__meta {
+  display: grid;
+  gap: 1px;
+}
+.songlink__artist {
+  color: var(--cream);
+  font-weight: 600;
+}
+.songlink__host {
+  font-size: 12.5px;
+  opacity: 0.85;
+}
+
+.card__artist {
+  color: var(--muted);
+  font-size: 13px;
+  margin: -4px 0 0;
+}
 
 /* reveal ------------------------------------------------------------------- */
 .reveal__pair {
