@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS question (
 ALTER TABLE question ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'question';
 ALTER TABLE question DROP CONSTRAINT IF EXISTS question_kind_check;
 ALTER TABLE question
-  ADD CONSTRAINT question_kind_check CHECK (kind IN ('question', 'memory', 'note', 'song', 'reveal'));
+  ADD CONSTRAINT question_kind_check CHECK (kind IN ('question', 'memory', 'note', 'song', 'reveal', 'this_that'));
 ALTER TABLE question ADD COLUMN IF NOT EXISTS link TEXT;                              -- 'song' shares
 ALTER TABLE question ADD COLUMN IF NOT EXISTS artist TEXT;                            -- 'song' shares
 ALTER TABLE question ADD COLUMN IF NOT EXISTS is_keepsake BOOLEAN NOT NULL DEFAULT false;
@@ -154,9 +154,34 @@ CREATE TABLE IF NOT EXISTS reaction (
 -- Widen the target set on older databases.
 ALTER TABLE reaction DROP CONSTRAINT IF EXISTS reaction_target_kind_check;
 ALTER TABLE reaction
-  ADD CONSTRAINT reaction_target_kind_check CHECK (target_kind IN ('question', 'response', 'reveal', 'event'));
+  ADD CONSTRAINT reaction_target_kind_check CHECK (target_kind IN ('question', 'response', 'reveal', 'event', 'thisthat'));
 
 CREATE INDEX IF NOT EXISTS reaction_target_idx ON reaction (target_kind, target_id);
+
+-- "This / That" shares: a set of binary picks. Items are the questions; each
+-- person's choices stay blind until BOTH have answered every item (like a
+-- 'reveal', but structured). A 'thisthat' reaction targets the question id.
+CREATE TABLE IF NOT EXISTS thisthat_item (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  question_id  UUID NOT NULL REFERENCES question(id),
+  position     INTEGER NOT NULL,
+  left_label   TEXT NOT NULL,
+  right_label  TEXT NOT NULL,
+  left_icon    TEXT NOT NULL DEFAULT '',
+  right_icon   TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS thisthat_item_q_idx ON thisthat_item (question_id);
+
+CREATE TABLE IF NOT EXISTS thisthat_answer (
+  id           BIGSERIAL PRIMARY KEY,
+  question_id  UUID NOT NULL REFERENCES question(id),
+  item_id      UUID NOT NULL REFERENCES thisthat_item(id),
+  user_id      INTEGER NOT NULL REFERENCES app_user(id),
+  choice       TEXT NOT NULL CHECK (choice IN ('left', 'right')),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (item_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS thisthat_answer_q_idx ON thisthat_answer (question_id);
 
 -- Blind answers for a 'reveal' share: both people answer, neither sees the
 -- other until both have. One answer per person per prompt.

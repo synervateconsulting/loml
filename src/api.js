@@ -28,6 +28,8 @@ export const api = {
   answer: (questionId, body) => request('POST', `/questions/${questionId}/response`, { body }),
   editAnswer: (id, body) => request('PATCH', `/responses/${id}`, { body }),
   revealAnswer: (id, body) => request('POST', `/questions/${id}/reveal`, { body }),
+  // answers: [{ itemId, choice: 'left' | 'right' }]
+  answerThisThat: (id, answers) => request('POST', `/questions/${id}/thisthat`, { answers }),
   toggleKeepsake: (id) => request('POST', `/questions/${id}/keepsake`),
   react: (targetKind, targetId, emoji) => request('POST', '/reactions', { targetKind, targetId, emoji }),
   markSeen: (kind, id) => request('POST', '/seen', { kind, id }),

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './api.js';
-import { actionLabel, isReveal } from './shares.js';
+import { actionLabel, isReveal, isThisThat } from './shares.js';
 import { pushSupported, permission, enablePush, syncBadge, clearDeliveredNotifications } from './push.js';
 import { eventIcon } from './calendar.js';
 import Login from './components/Login.jsx';
@@ -174,8 +174,11 @@ export default function App() {
   const openView = (q, canEditAnswer) => setModal({ kind: 'view', question: q, canEditAnswer });
   // On "My shares", everything unacknowledged is editable — including a reveal
   // prompt (and your blind answer) while it's still waiting to be revealed.
-  const mineOpenLabel = () => 'Edit';
-  const mineOpenAction = (q) => setModal({ kind: 'edit', question: q });
+  // This/That can't be edited once sent — the asker just views their locked
+  // picks while waiting. Everything else opens the editor.
+  const mineOpenLabel = (q) => (isThisThat(q) ? 'View' : 'Edit');
+  const mineOpenAction = (q) =>
+    setModal(isThisThat(q) ? { kind: 'view', question: q } : { kind: 'edit', question: q });
 
   const signOut = async () => {
     await api.logout();
@@ -187,6 +190,16 @@ export default function App() {
 
   const usePrompt = (prompt) =>
     setModal({ kind: 'share', initialKind: 'reveal', initialTitle: prompt, lockKind: true });
+
+  // Start a This / That composer, optionally prefilled from a template.
+  const startThisThat = ({ title, items }) =>
+    setModal({
+      kind: 'share',
+      initialKind: 'this_that',
+      initialTitle: title || '',
+      initialItems: items || null,
+      lockKind: true,
+    });
 
   // The Theirs/Mine board, reused for both the normal and spicy tabs.
   const renderBoard = (received, asked) => {
@@ -438,7 +451,7 @@ export default function App() {
 
         {view === 'lists' && <ListsView />}
 
-        {view === 'games' && <GamesView onUsePrompt={usePrompt} />}
+        {view === 'games' && <GamesView onUsePrompt={usePrompt} onStartThisThat={startThisThat} />}
       </main>
 
       {modal?.kind === 'share' && (
@@ -447,6 +460,7 @@ export default function App() {
           initialKind={modal.initialKind || 'question'}
           initialTitle={modal.initialTitle || ''}
           initialSpicy={Boolean(modal.initialSpicy)}
+          initialItems={modal.initialItems || null}
           lockKind={Boolean(modal.lockKind)}
           onClose={close}
           onDone={finish}
