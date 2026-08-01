@@ -618,18 +618,27 @@ function RevealView({ question, meId, onClose }) {
           <div className="reveal__pair">
             <p className="eyebrow">{mineName}</p>
             <p className="prose prose--answer">{myBody || '—'}</p>
+            {/* their reaction to your answer (read-only) */}
+            <Reactions
+              targetKind="reveal"
+              targetId={question.id}
+              reactions={(r.reactions || []).filter((x) => x.userId !== meId)}
+              meId={meId}
+              canReact={false}
+            />
           </div>
           <div className="reveal__pair">
             <p className="eyebrow">{theirName}</p>
             <p className="prose prose--answer">{theirBody || '—'}</p>
+            {/* your reaction to their answer */}
+            <Reactions
+              targetKind="reveal"
+              targetId={question.id}
+              reactions={(r.reactions || []).filter((x) => x.userId === meId)}
+              meId={meId}
+              canReact
+            />
           </div>
-          <Reactions
-            targetKind="question"
-            targetId={question.id}
-            reactions={question.reactions}
-            meId={meId}
-            canReact={question.askerId !== meId}
-          />
         </>
       ) : (
         <>
