@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { SHARE_KINDS, kindOf, isQuestion, isReveal, isSong, kindLabel } from '../shares.js';
 import { EVENT_TYPES } from '../calendar.js';
@@ -90,7 +90,14 @@ function setLocked(on) {
   document.body.classList.toggle('scroll-locked', on);
 }
 function useScrollLock() {
-  useEffect(() => {
+  // useLayoutEffect (not useEffect) so the lock is applied BEFORE the browser
+  // paints the sheet. If we locked in useEffect, the first modal would paint
+  // once unlocked, then toggling overflow:hidden on the root afterwards forces
+  // a reflow/repaint that iOS Safari botches — the sheet's lower half stays
+  // unpainted (blank but interactive). Locking pre-paint means one clean paint.
+  // (Opening a modal over an already-open one never hit this: overflow was
+  // already hidden, so there was no net change to reflow.)
+  useLayoutEffect(() => {
     if (scrollLockCount === 0) setLocked(true);
     scrollLockCount += 1;
     return () => {
