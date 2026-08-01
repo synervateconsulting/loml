@@ -1893,6 +1893,9 @@ body::before {
 }
 .deck__card {
   width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   text-align: left;
   appearance: none;
   background: var(--night-2);
@@ -1902,6 +1905,32 @@ body::before {
   font: 500 14px var(--body);
   padding: 11px 13px;
   cursor: pointer;
+}
+.deck__cardtext {
+  flex: 1;
+  min-width: 0;
+}
+.deck__card.is-played {
+  opacity: 0.72;
+}
+
+/* "Played" marker on games (decks prompts + this/that templates) */
+.playedtag {
+  flex: none;
+  display: inline-block;
+  margin-left: 8px;
+  font: 700 9px var(--body);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--candle);
+  background: rgba(240, 178, 107, 0.14);
+  border: 1px solid rgba(240, 178, 107, 0.38);
+  border-radius: 999px;
+  padding: 2px 7px;
+  vertical-align: middle;
+}
+.ttset.is-played {
+  opacity: 0.82;
 }
 .deck__card:hover {
   border-color: rgba(232, 135, 155, 0.4);

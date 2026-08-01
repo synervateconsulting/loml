@@ -6,8 +6,9 @@ import { templateToItems } from './ThisThat.jsx';
 // "Games" groups the playful, low-stakes ways to start a share. It nests its
 // own sub-tabs (Decks, This / That) beneath the top nav, mirroring how the
 // calendar nests Calendar / Upcoming / Notifications.
-export default function GamesView({ onUsePrompt, onStartThisThat }) {
+export default function GamesView({ onUsePrompt, onStartThisThat, usedGames = [] }) {
   const [pane, setPane] = useState('decks');
+  const used = new Set(usedGames);
 
   return (
     <div className="games">
@@ -30,7 +31,7 @@ export default function GamesView({ onUsePrompt, onStartThisThat }) {
         </button>
       </div>
 
-      {pane === 'decks' && <DecksView onUsePrompt={onUsePrompt} />}
+      {pane === 'decks' && <DecksView onUsePrompt={onUsePrompt} used={used} />}
 
       {pane === 'thisthat' && (
         <div className="thisthat">
@@ -38,21 +39,27 @@ export default function GamesView({ onUsePrompt, onStartThisThat }) {
             Pick a set, choose your own sides, and send it — you’ll both see where you match once they answer.
           </p>
           <div className="ttsets">
-            {THISTHAT_TEMPLATES.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className="ttset"
-                onClick={() => onStartThisThat?.({ title: t.name, items: templateToItems(t) })}
-              >
-                <span className="ttset__icon" aria-hidden="true">{t.icon}</span>
-                <span className="ttset__text">
-                  <span className="ttset__name">{t.name}</span>
-                  <span className="ttset__blurb">{t.blurb}</span>
-                </span>
-                <span className="ttset__count">{t.items.length}</span>
-              </button>
-            ))}
+            {THISTHAT_TEMPLATES.map((t) => {
+              const played = used.has(`tt:${t.id}`);
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`ttset ${played ? 'is-played' : ''}`}
+                  onClick={() => onStartThisThat?.({ title: t.name, items: templateToItems(t), usedKey: `tt:${t.id}` })}
+                >
+                  <span className="ttset__icon" aria-hidden="true">{t.icon}</span>
+                  <span className="ttset__text">
+                    <span className="ttset__name">
+                      {t.name}
+                      {played && <span className="playedtag">Played</span>}
+                    </span>
+                    <span className="ttset__blurb">{t.blurb}</span>
+                  </span>
+                  <span className="ttset__count">{t.items.length}</span>
+                </button>
+              );
+            })}
           </div>
           <button
             type="button"

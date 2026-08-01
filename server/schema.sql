@@ -183,6 +183,15 @@ CREATE TABLE IF NOT EXISTS thisthat_answer (
 );
 CREATE INDEX IF NOT EXISTS thisthat_answer_q_idx ON thisthat_answer (question_id);
 
+-- Which game prompts/templates the two of you have already played. Couple-wide
+-- (this app is a single couple), keyed by a stable id like 'deck:playful:2' or
+-- 'tt:food'. Presence just drives a "Played" tag; sets stay replayable.
+CREATE TABLE IF NOT EXISTS game_used (
+  game_key   TEXT PRIMARY KEY,
+  used_by    INTEGER REFERENCES app_user(id),
+  used_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Blind answers for a 'reveal' share: both people answer, neither sees the
 -- other until both have. One answer per person per prompt.
 CREATE TABLE IF NOT EXISTS reveal_answer (

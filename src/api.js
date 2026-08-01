@@ -34,6 +34,7 @@ export const api = {
   react: (targetKind, targetId, emoji) => request('POST', '/reactions', { targetKind, targetId, emoji }),
   markSeen: (kind, id) => request('POST', '/seen', { kind, id }),
   couple: () => request('GET', '/couple'),
+  gamesUsed: () => request('GET', '/games/used'),
   // fields: { kind, title, startsAt, allDay }
   setCountdown: (fields) => request('POST', '/couple/countdown', fields),
   clearCountdown: () => request('POST', '/couple/countdown', { clear: true }),

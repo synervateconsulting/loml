@@ -368,6 +368,7 @@ router.post('/questions', requireUser, async (req, res) => {
   const artist = (req.body?.artist || '').trim();
   const revealAnswer = (req.body?.answer || '').trim(); // the asker's own blind answer
   const spicy = Boolean(req.body?.spicy);
+  const usedKey = (req.body?.usedKey || '').trim().slice(0, 120); // deck prompt / template it came from
   const kind = SHARE_KINDS.includes(req.body?.kind) ? req.body.kind : 'question';
   if (!title) return res.status(400).json({ error: 'Give it a title.' });
   if (kind === 'song' && !/^https?:\/\//i.test(link))
@@ -432,6 +433,12 @@ router.post('/questions', requireUser, async (req, res) => {
       }
     }
     await client.query('COMMIT');
+    // Mark the source deck prompt / template as played (couple-wide, replayable).
+    if (usedKey)
+      await query('INSERT INTO game_used (game_key, used_by) VALUES ($1, $2) ON CONFLICT (game_key) DO NOTHING', [
+        usedKey,
+        req.user.id,
+      ]);
     await logActivity(req.user.id, 'shared', 'question', id, { title, kind, spicy });
     notify(
       partner.id,
@@ -917,6 +924,14 @@ router.post('/questions/:id/keepsake', requireUser, async (req, res) => {
   }
   await logActivity(req.user.id, next ? 'kept' : 'unkept', 'question', req.params.id);
   res.json({ ok: true, keptByMe: next });
+});
+
+/* -------------------------------------------------------------------- games */
+
+// Stable keys of deck prompts / This-That templates the couple has played.
+router.get('/games/used', requireUser, async (_req, res) => {
+  const { rows } = await query('SELECT game_key FROM game_used');
+  res.json({ keys: rows.map((r) => r.game_key) });
 });
 
 /* ---------------------------------------------------------------- reactions */

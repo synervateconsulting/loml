@@ -191,6 +191,7 @@ export function ShareModal({
   initialTitle = '',
   initialSpicy = false,
   initialItems = null,
+  usedKey = null,
   lockKind = false,
 }) {
   const [kind, setKind] = useState(initialKind);
@@ -240,6 +241,7 @@ export function ShareModal({
             detail,
             kind,
             spicy,
+            ...(usedKey ? { usedKey } : {}),
             ...(song ? { link: link.trim(), artist: artist.trim() } : {}),
             ...(reveal ? { answer } : {}),
             ...(tt

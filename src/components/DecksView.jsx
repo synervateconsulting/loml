@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { DECKS } from '../decks.js';
 
 // Browse a deck, tap a prompt -> opens the composer prefilled (as an
-// "answer together" reveal by default).
-export default function DecksView({ onUsePrompt }) {
+// "answer together" reveal by default). Prompts the couple has already used
+// carry a "Played" tag (still usable again).
+export default function DecksView({ onUsePrompt, used }) {
   const [open, setOpen] = useState(DECKS[0]?.id || null);
+  const isUsed = (key) => used?.has(key);
 
   return (
     <div className="decks">
@@ -27,13 +29,22 @@ export default function DecksView({ onUsePrompt }) {
           </button>
           {open === deck.id && (
             <ul className="deck__cards">
-              {deck.prompts.map((p) => (
-                <li key={p}>
-                  <button type="button" className="deck__card" onClick={() => onUsePrompt(p)}>
-                    {p}
-                  </button>
-                </li>
-              ))}
+              {deck.prompts.map((p, i) => {
+                const key = `deck:${deck.id}:${i}`;
+                const played = isUsed(key);
+                return (
+                  <li key={p}>
+                    <button
+                      type="button"
+                      className={`deck__card ${played ? 'is-played' : ''}`}
+                      onClick={() => onUsePrompt(p, key)}
+                    >
+                      <span className="deck__cardtext">{p}</span>
+                      {played && <span className="playedtag">Played</span>}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>

@@ -33,6 +33,7 @@ export default function App() {
   const [data, setData] = useState({ asked: [], received: [] });
   const [couple, setCouple] = useState(null);
   const [calendar, setCalendar] = useState({ events: [], notifications: { needsAck: [], acknowledged: [] } });
+  const [usedGames, setUsedGames] = useState([]);
   const [tab, setTab] = useState('theirs');
   const [view, setView] = useState('shares');
   const [modal, setModal] = useState(null);
@@ -47,14 +48,16 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      const [questions, coupleState, cal] = await Promise.all([
+      const [questions, coupleState, cal, used] = await Promise.all([
         api.questions(),
         api.couple(),
         api.calendar(),
+        api.gamesUsed(),
       ]);
       setData(questions);
       setCouple(coupleState);
       setCalendar(cal);
+      setUsedGames(used?.keys || []);
       setError('');
     } catch (err) {
       setError(err.message);
@@ -185,19 +188,21 @@ export default function App() {
     setSession(null);
     setData({ asked: [], received: [] });
     setCalendar({ events: [], notifications: { needsAck: [], acknowledged: [] } });
+    setUsedGames([]);
     setView('shares');
   };
 
-  const usePrompt = (prompt) =>
-    setModal({ kind: 'share', initialKind: 'reveal', initialTitle: prompt, lockKind: true });
+  const usePrompt = (prompt, usedKey) =>
+    setModal({ kind: 'share', initialKind: 'reveal', initialTitle: prompt, usedKey: usedKey || null, lockKind: true });
 
   // Start a This / That composer, optionally prefilled from a template.
-  const startThisThat = ({ title, items }) =>
+  const startThisThat = ({ title, items, usedKey }) =>
     setModal({
       kind: 'share',
       initialKind: 'this_that',
       initialTitle: title || '',
       initialItems: items || null,
+      usedKey: usedKey || null,
       lockKind: true,
     });
 
@@ -451,7 +456,9 @@ export default function App() {
 
         {view === 'lists' && <ListsView />}
 
-        {view === 'games' && <GamesView onUsePrompt={usePrompt} onStartThisThat={startThisThat} />}
+        {view === 'games' && (
+          <GamesView onUsePrompt={usePrompt} onStartThisThat={startThisThat} usedGames={usedGames} />
+        )}
       </main>
 
       {modal?.kind === 'share' && (
@@ -461,6 +468,7 @@ export default function App() {
           initialTitle={modal.initialTitle || ''}
           initialSpicy={Boolean(modal.initialSpicy)}
           initialItems={modal.initialItems || null}
+          usedKey={modal.usedKey || null}
           lockKind={Boolean(modal.lockKind)}
           onClose={close}
           onDone={finish}
