@@ -23,4 +23,4 @@ export const actionLabel = (share) => {
   return 'Acknowledge';
 };
 
-export const REACTION_EMOJI = ['❤️', '🔥', '😂', '🥹', '👀'];
+export const REACTION_EMOJI = ['❤️', '🔥', '😈', '😂', '🥹', '👀'];

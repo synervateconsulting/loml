@@ -171,6 +171,7 @@ async function reactionsFor(questionIds, responseIds) {
   const { rows } = await query(
     `SELECT user_id, target_kind, target_id, emoji FROM reaction
       WHERE (target_kind = 'question' AND target_id = ANY($1::uuid[]))
+         OR (target_kind = 'reveal'   AND target_id = ANY($1::uuid[]))
          OR (target_kind = 'response' AND target_id = ANY($2::uuid[]))`,
     [questionIds, responseIds]
   );
@@ -217,6 +218,8 @@ function shapeQuestion(row, ctx) {
       myBody: mine ? mine.body : '',
       askerBody: revealed ? byAsker?.body ?? '' : null,
       recipientBody: revealed ? byRecip?.body ?? '' : null,
+      // Reactions to the blind answers (each is "reactor → the OTHER's answer").
+      reactions: revealed ? reactionsOn(reactions, 'reveal', row.id) : [],
     };
   }
 
@@ -746,11 +749,11 @@ router.post('/questions/:id/keepsake', requireUser, async (req, res) => {
 
 /* ---------------------------------------------------------------- reactions */
 
-const REACTION_EMOJI = ['❤️', '🔥', '😂', '🥹', '👀'];
+const REACTION_EMOJI = ['❤️', '🔥', '😈', '😂', '🥹', '👀'];
 
 router.post('/reactions', requireUser, async (req, res) => {
   const { targetKind, targetId, emoji } = req.body || {};
-  if (!['question', 'response'].includes(targetKind))
+  if (!['question', 'response', 'reveal'].includes(targetKind))
     return res.status(400).json({ error: 'Bad target.' });
 
   // Confirm the target is part of a share you're in, and figure out whether
@@ -763,6 +766,19 @@ router.post('/reactions', requireUser, async (req, res) => {
     if (q && (q.asker_id === req.user.id || q.recipient_id === req.user.id)) {
       member = true;
       isAuthor = q.asker_id === req.user.id;
+    }
+  } else if (targetKind === 'reveal') {
+    // A reveal reaction is always to the OTHER person's blind answer, so it's
+    // never "your own". Only allowed once both have answered.
+    const { rows } = await query(
+      `SELECT asker_id, recipient_id,
+              (SELECT count(*) FROM reveal_answer WHERE question_id = q.id) AS answered
+         FROM question q WHERE id = $1 AND kind = 'reveal' AND is_removed = false`,
+      [targetId]
+    );
+    const q = rows[0];
+    if (q && (q.asker_id === req.user.id || q.recipient_id === req.user.id) && Number(q.answered) >= 2) {
+      member = true;
     }
   } else {
     const { rows } = await query(

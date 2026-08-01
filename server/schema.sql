@@ -143,12 +143,18 @@ CREATE INDEX IF NOT EXISTS push_sub_user_idx ON push_subscription (user_id);
 CREATE TABLE IF NOT EXISTS reaction (
   id           BIGSERIAL PRIMARY KEY,
   user_id      INTEGER NOT NULL REFERENCES app_user(id),
-  target_kind  TEXT NOT NULL CHECK (target_kind IN ('question', 'response')),
-  target_id    UUID NOT NULL,
+  target_kind  TEXT NOT NULL CHECK (target_kind IN ('question', 'response', 'reveal')),
+  target_id    UUID NOT NULL,   -- a reveal reaction targets the question; it means
+                                -- "my reaction to the other person's blind answer"
   emoji        TEXT NOT NULL,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (user_id, target_kind, target_id)
 );
+
+-- Widen the target set on older databases.
+ALTER TABLE reaction DROP CONSTRAINT IF EXISTS reaction_target_kind_check;
+ALTER TABLE reaction
+  ADD CONSTRAINT reaction_target_kind_check CHECK (target_kind IN ('question', 'response', 'reveal'));
 
 CREATE INDEX IF NOT EXISTS reaction_target_idx ON reaction (target_kind, target_id);
 
