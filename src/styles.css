@@ -514,8 +514,11 @@ body::before {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  background: rgba(12, 5, 9, 0.66);
-  backdrop-filter: blur(3px);
+  /* No backdrop-filter: on iOS Safari it spawns a compositing layer that
+     fails to paint the sheet's content when the sheet animates in fresh
+     (e.g. opened straight from the Upcoming tab) — the fields are there and
+     tappable but render blank. A more opaque scrim gives the same dimming. */
+  background: rgba(10, 4, 7, 0.8);
 }
 
 .scrim--confirm {
@@ -569,7 +572,9 @@ body::before {
   padding: 18px var(--pad);
   min-height: 0; /* let the body shrink inside the flex column so it scrolls, not the sheet */
   overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  /* Deliberately no -webkit-overflow-scrolling: touch — it's deprecated and
+     on iOS Safari leaves overflow content unpainted (blank but scrollable)
+     until a forced repaint. Modern iOS has momentum scrolling natively. */
   overscroll-behavior: contain; /* don't chain scroll to the page behind */
 }
 
