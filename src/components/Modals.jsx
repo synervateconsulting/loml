@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { SHARE_KINDS, PICK_KINDS, kindOf, isQuestion, isReveal, isSong, isThisThat, isPickGame, isGuess, kindLabel } from '../shares.js';
 import { ThisThatBuilder, ThisThatView, GuessView, emptyBuilderItems, itemsAreComplete } from './ThisThat.jsx';
-import { EVENT_TYPES } from '../calendar.js';
 import Confirm, { discardSteps, sendSteps } from './Confirm.jsx';
 import { Attachments } from './Media.jsx';
 import { Reactions } from './Reactions.jsx';
@@ -949,90 +948,5 @@ export function WhenFields({ allDay, setAllDay, startsAt, setStartsAt }) {
   );
 }
 
-export function CountdownModal({ countdown, onClose, onDone }) {
-  const cur = countdown || null; // { eventId, kind, title, startsAt, allDay } | null
-  const [kind, setKind] = useState(cur?.kind || 'other');
-  const [title, setTitle] = useState(cur?.title || '');
-  const [allDay, setAllDay] = useState(cur?.allDay ?? true);
-  const [startsAt, setStartsAt] = useState(cur?.startsAt || '');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-
-  const canSave = title.trim() && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(startsAt) && !busy;
-
-  const save = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      await api.setCountdown({ kind, title: title.trim(), startsAt, allDay });
-      onDone();
-    } catch (err) {
-      setError(err.message);
-      setBusy(false);
-    }
-  };
-  const clear = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      await api.clearCountdown();
-      onDone();
-    } catch (err) {
-      setError(err.message);
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal
-      onScrimClick={onClose}
-      eyebrow="The two of you"
-      title="Set a countdown"
-      footer={
-        <>
-          <button type="button" className="btn btn--ghost" onClick={onClose}>
-            Cancel
-          </button>
-          <button type="button" className="btn btn--primary" onClick={save} disabled={!canSave}>
-            Save
-          </button>
-        </>
-      }
-    >
-      <div className="field">
-        <span className="field__label">Type</span>
-        <div className="segmented segmented--wrap" role="group" aria-label="Event type">
-          {EVENT_TYPES.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              className={`segmented__opt ${kind === t.key ? 'is-active' : ''}`}
-              aria-pressed={kind === t.key}
-              onClick={() => setKind(t.key)}
-            >
-              {t.icon} {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <label className="field">
-        <span className="field__label">What is it?</span>
-        <input
-          className="field__input"
-          value={title}
-          maxLength={80}
-          placeholder="Freddie visits, our anniversary…"
-          onChange={(e) => setTitle(e.target.value)}
-        />
-      </label>
-      <WhenFields allDay={allDay} setAllDay={setAllDay} startsAt={startsAt} setStartsAt={setStartsAt} />
-      {cur && (
-        <button type="button" className="linkbtn linkbtn--danger" onClick={clear} disabled={busy}>
-          Clear the countdown
-        </button>
-      )}
-      <p className="hint">Shared — this also lives on your calendar.</p>
-      {error && <p className="notice notice--error">{error}</p>}
-    </Modal>
-  );
-}
+// (Countdown editing now happens through the calendar's EventEditor — a
+// countdown is just the selected calendar event.)

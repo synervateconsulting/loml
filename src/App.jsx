@@ -7,16 +7,10 @@ import Login from './components/Login.jsx';
 import QuestionSection from './components/QuestionList.jsx';
 import ListsView from './components/ListsView.jsx';
 import GamesView from './components/GamesView.jsx';
-import CalendarView from './components/CalendarView.jsx';
+import CalendarView, { EventEditor } from './components/CalendarView.jsx';
 import Countdown from './components/Countdown.jsx';
 import { DailyCard, DailyModal } from './components/Daily.jsx';
-import {
-  ShareModal,
-  RespondModal,
-  EditQuestionModal,
-  ViewModal,
-  CountdownModal,
-} from './components/Modals.jsx';
+import { ShareModal, RespondModal, EditQuestionModal, ViewModal } from './components/Modals.jsx';
 
 const firstName = (name = '') => name.split(' ')[0];
 
@@ -146,6 +140,16 @@ export default function App() {
 
   const me = session.me;
   const partner = firstName(session.partner?.name || 'them');
+  // The countdown IS a calendar event; tapping the banner edits that event (or
+  // creates a new one and makes it the countdown).
+  const countdownEvent = couple?.countdown?.eventId
+    ? calendar.events.find((e) => e.id === couple.countdown.eventId) || null
+    : null;
+  const todayStr = (() => {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  })();
   const close = () => setModal(null);
   const finish = async () => {
     setModal(null);
@@ -518,7 +522,17 @@ export default function App() {
         />
       )}
       {modal?.kind === 'countdown' && (
-        <CountdownModal countdown={couple?.countdown} onClose={close} onDone={finish} />
+        <EventEditor
+          event={countdownEvent}
+          defaultDate={todayStr}
+          partner={partner}
+          isCountdown={Boolean(countdownEvent)}
+          asCountdown={!countdownEvent}
+          onClose={close}
+          onSaved={finish}
+          onRemoved={finish}
+          onChanged={load}
+        />
       )}
       {modal?.kind === 'daily' && <DailyModal daily={daily} onClose={close} onAnswered={finish} />}
     </div>

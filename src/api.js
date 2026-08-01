@@ -40,9 +40,6 @@ export const api = {
   daily: () => request('GET', '/daily'),
   dailyHistory: () => request('GET', '/daily/history'),
   answerDaily: (body) => request('POST', '/daily', { body }),
-  // fields: { kind, title, startsAt, allDay }
-  setCountdown: (fields) => request('POST', '/couple/countdown', fields),
-  clearCountdown: () => request('POST', '/couple/countdown', { clear: true }),
   selectCountdown: (eventId) => request('POST', '/couple/countdown/select', { eventId }),
   thinkingOfYou: () => request('POST', '/nudge'),
   nudges: () => request('GET', '/nudges'),

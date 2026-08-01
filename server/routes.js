@@ -1320,47 +1320,9 @@ router.get('/couple', requireUser, async (_req, res) => {
 
 // Create or edit the countdown's underlying calendar event (from the banner),
 // or clear the selection. Editing/creating notifies the partner like any event.
-router.post('/couple/countdown', requireUser, async (req, res) => {
-  if (req.body?.clear) {
-    await query('UPDATE couple_state SET countdown_event_id = NULL WHERE id = 1');
-    return res.json({ ok: true });
-  }
-  const kind = EVENT_KINDS.includes(req.body?.kind) ? req.body.kind : 'other';
-  const title = (req.body?.title || '').trim();
-  const allDay = Boolean(req.body?.allDay);
-  const startsAt = (req.body?.startsAt || '').trim();
-  if (!title) return res.status(400).json({ error: 'Give it a title.' });
-  if (!STARTS_AT_RE.test(startsAt)) return res.status(400).json({ error: 'Pick a date.' });
-
-  const cur = await query(
-    `SELECT cs.countdown_event_id AS id
-       FROM couple_state cs
-       LEFT JOIN calendar_event e ON e.id = cs.countdown_event_id AND e.is_removed = false
-      WHERE cs.id = 1 AND e.id IS NOT NULL`
-  );
-  const existingId = cur.rows[0]?.id || null;
-  const actor = asUser(req.user.id, req.user.display_name);
-
-  if (existingId) {
-    await query(
-      `UPDATE calendar_event SET kind = $1, title = $2, starts_at = $3, all_day = $4,
-              updated_by = $5, updated_at = now() WHERE id = $6`,
-      [kind, title, startsAt, allDay, req.user.id, existingId]
-    );
-    await notifyEvent(existingId, actor, 'edited', title);
-    return res.json({ ok: true, eventId: existingId });
-  }
-  const { rows } = await query(
-    `INSERT INTO calendar_event (kind, title, starts_at, all_day, created_by, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $5) RETURNING id`,
-    [kind, title, startsAt, allDay, req.user.id]
-  );
-  await query('UPDATE couple_state SET countdown_event_id = $1 WHERE id = 1', [rows[0].id]);
-  await notifyEvent(rows[0].id, actor, 'created', title);
-  res.status(201).json({ ok: true, eventId: rows[0].id });
-});
-
 // "Set as our countdown" — point the shared countdown at an existing event.
+// (Countdowns are created/edited through the normal calendar-event endpoints;
+// the banner just opens the event editor.)
 router.post('/couple/countdown/select', requireUser, async (req, res) => {
   const eventId = req.body?.eventId;
   const { rows } = await query('SELECT id FROM calendar_event WHERE id = $1 AND is_removed = false', [
