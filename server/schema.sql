@@ -143,7 +143,7 @@ CREATE INDEX IF NOT EXISTS push_sub_user_idx ON push_subscription (user_id);
 CREATE TABLE IF NOT EXISTS reaction (
   id           BIGSERIAL PRIMARY KEY,
   user_id      INTEGER NOT NULL REFERENCES app_user(id),
-  target_kind  TEXT NOT NULL CHECK (target_kind IN ('question', 'response', 'reveal')),
+  target_kind  TEXT NOT NULL CHECK (target_kind IN ('question', 'response', 'reveal', 'event')),
   target_id    UUID NOT NULL,   -- a reveal reaction targets the question; it means
                                 -- "my reaction to the other person's blind answer"
   emoji        TEXT NOT NULL,
@@ -154,7 +154,7 @@ CREATE TABLE IF NOT EXISTS reaction (
 -- Widen the target set on older databases.
 ALTER TABLE reaction DROP CONSTRAINT IF EXISTS reaction_target_kind_check;
 ALTER TABLE reaction
-  ADD CONSTRAINT reaction_target_kind_check CHECK (target_kind IN ('question', 'response', 'reveal'));
+  ADD CONSTRAINT reaction_target_kind_check CHECK (target_kind IN ('question', 'response', 'reveal', 'event'));
 
 CREATE INDEX IF NOT EXISTS reaction_target_idx ON reaction (target_kind, target_id);
 
@@ -232,3 +232,48 @@ INSERT INTO keepsake (user_id, question_id)
   SELECT u.id, q.id FROM question q CROSS JOIN app_user u WHERE q.is_keepsake = true
   ON CONFLICT DO NOTHING;
 UPDATE question SET is_keepsake = false WHERE is_keepsake = true;
+
+-- Shared couples calendar. Either person can create or edit any event.
+-- starts_at is a naive wall-clock (no timezone) so both people see the same
+-- time regardless of where they are; created/updated are true instants.
+CREATE TABLE IF NOT EXISTS calendar_event (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  kind         TEXT NOT NULL CHECK (kind IN ('vacation', 'appointment', 'work_trip', 'date_night', 'other')),
+  title        TEXT NOT NULL,
+  starts_at    TIMESTAMP NOT NULL,
+  description  TEXT NOT NULL DEFAULT '',
+  location     TEXT NOT NULL DEFAULT '',
+  created_by   INTEGER NOT NULL REFERENCES app_user(id),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_by   INTEGER NOT NULL REFERENCES app_user(id),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  is_removed   BOOLEAN NOT NULL DEFAULT false
+);
+
+CREATE INDEX IF NOT EXISTS calendar_event_start_idx ON calendar_event (starts_at);
+
+CREATE TABLE IF NOT EXISTS event_comment (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id     UUID NOT NULL REFERENCES calendar_event(id),
+  user_id      INTEGER NOT NULL REFERENCES app_user(id),
+  body         TEXT NOT NULL,
+  is_removed   BOOLEAN NOT NULL DEFAULT false,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS event_comment_event_idx ON event_comment (event_id);
+
+-- One notification per calendar action, aimed at the other person, acknowledged
+-- like a share and then filed under "acknowledged".
+CREATE TABLE IF NOT EXISTS event_notification (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id         UUID NOT NULL REFERENCES calendar_event(id),
+  to_id            INTEGER NOT NULL REFERENCES app_user(id),
+  from_id          INTEGER NOT NULL REFERENCES app_user(id),
+  action           TEXT NOT NULL CHECK (action IN ('created', 'edited', 'commented', 'reacted')),
+  acknowledged     BOOLEAN NOT NULL DEFAULT false,
+  acknowledged_at  TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS event_notification_to_idx ON event_notification (to_id, acknowledged);

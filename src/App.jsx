@@ -6,6 +6,7 @@ import Login from './components/Login.jsx';
 import QuestionSection from './components/QuestionList.jsx';
 import ListsView from './components/ListsView.jsx';
 import DecksView from './components/DecksView.jsx';
+import CalendarView from './components/CalendarView.jsx';
 import Countdown from './components/Countdown.jsx';
 import {
   ShareModal,
@@ -30,6 +31,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState({ asked: [], received: [] });
   const [couple, setCouple] = useState(null);
+  const [calendar, setCalendar] = useState({ events: [], notifications: { needsAck: [], acknowledged: [] } });
   const [tab, setTab] = useState('theirs');
   const [view, setView] = useState('shares');
   const [modal, setModal] = useState(null);
@@ -44,9 +46,14 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      const [questions, coupleState] = await Promise.all([api.questions(), api.couple()]);
+      const [questions, coupleState, cal] = await Promise.all([
+        api.questions(),
+        api.couple(),
+        api.calendar(),
+      ]);
       setData(questions);
       setCouple(coupleState);
+      setCalendar(cal);
       setError('');
     } catch (err) {
       setError(err.message);
@@ -67,8 +74,9 @@ export default function App() {
   }, [load]);
 
   useEffect(() => {
-    syncBadge(data.received.filter((q) => q.status === 'open').length);
-  }, [data.received]);
+    const waiting = data.received.filter((q) => q.status === 'open').length;
+    syncBadge(waiting + (calendar.notifications?.needsAck?.length || 0));
+  }, [data.received, calendar]);
 
   // Re-cover the spicy tab every time you leave it, so it always asks again.
   useEffect(() => {
@@ -172,6 +180,7 @@ export default function App() {
     await api.logout();
     setSession(null);
     setData({ asked: [], received: [] });
+    setCalendar({ events: [], notifications: { needsAck: [], acknowledged: [] } });
     setView('shares');
   };
 
@@ -293,6 +302,19 @@ export default function App() {
             </button>
           </div>
         </div>
+        <div className="countdownrow">
+          <Countdown countdown={couple} onEdit={() => setModal({ kind: 'countdown' })} />
+          <button
+            type="button"
+            className={`calbtn ${view === 'calendar' ? 'is-active' : ''}`}
+            onClick={() => setView(view === 'calendar' ? 'shares' : 'calendar')}
+            aria-label="Calendar"
+            aria-pressed={view === 'calendar'}
+          >
+            📅
+            {calendar.notifications?.needsAck?.length > 0 && <span className="dot" aria-label="calendar updates" />}
+          </button>
+        </div>
         <button
           type="button"
           className="btn btn--primary btn--wide"
@@ -344,11 +366,16 @@ export default function App() {
         )}
         {error && <p className="notice notice--error">{error}</p>}
 
-        {view === 'shares' && (
-          <>
-            <Countdown countdown={couple} onEdit={() => setModal({ kind: 'countdown' })} />
-            {renderBoard(receivedClean, askedClean)}
-          </>
+        {view === 'shares' && renderBoard(receivedClean, askedClean)}
+
+        {view === 'calendar' && (
+          <CalendarView
+            events={calendar.events}
+            notifications={calendar.notifications}
+            meId={me.id}
+            partner={partner}
+            onChanged={load}
+          />
         )}
 
         {view === 'spicy' &&
