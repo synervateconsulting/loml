@@ -3,6 +3,7 @@ import multer from 'multer';
 import { query, keyMatches, logActivity, pool } from './db.js';
 import { startSession, endSession, requireUser, partnerOf } from './auth.js';
 import { publicKey, saveSubscription, notify } from './push.js';
+import { promptForDay } from './daily.js';
 
 // Copy for the push banners.
 const newShareTitle = (name, kind) =>
@@ -1043,6 +1044,81 @@ router.post('/questions/:id/keepsake', requireUser, async (req, res) => {
 });
 
 /* -------------------------------------------------------------------- games */
+
+/* ------------------------------------------------------------- daily question */
+
+const fmtDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+router.get('/daily', requireUser, async (req, res) => {
+  const partner = await partnerOf(req.user.id);
+  const { rows: t } = await query("SELECT to_char(CURRENT_DATE, 'YYYY-MM-DD') AS today");
+  const today = t[0].today;
+  const prompt = promptForDay(today);
+
+  const { rows } = await query(
+    "SELECT to_char(day, 'YYYY-MM-DD') AS day, user_id, body FROM daily_answer WHERE day > CURRENT_DATE - INTERVAL '45 days' ORDER BY day DESC",
+    []
+  );
+  const byDay = new Map();
+  for (const r of rows) {
+    if (!byDay.has(r.day)) byDay.set(r.day, {});
+    byDay.get(r.day)[r.user_id] = r.body;
+  }
+  const mineToday = byDay.get(today)?.[req.user.id];
+  const theirsToday = partner ? byDay.get(today)?.[partner.id] : undefined;
+  const iAnswered = mineToday !== undefined;
+  const revealed = iAnswered && theirsToday !== undefined;
+
+  // Streak: consecutive days (ending today or yesterday) where BOTH answered.
+  const both = new Set([...byDay.entries()].filter(([, m]) => Object.keys(m).length >= 2).map(([d]) => d));
+  const cur = new Date(`${today}T00:00:00`);
+  if (!both.has(fmtDay(cur))) cur.setDate(cur.getDate() - 1);
+  let streak = 0;
+  while (both.has(fmtDay(cur))) {
+    streak++;
+    cur.setDate(cur.getDate() - 1);
+  }
+
+  // Recent revealed days (skip today) for a little history.
+  const recent = [...byDay.entries()]
+    .filter(([d, m]) => d !== today && partner && m[req.user.id] !== undefined && m[partner.id] !== undefined)
+    .slice(0, 10)
+    .map(([d, m]) => ({ day: d, prompt: promptForDay(d), mine: m[req.user.id], theirs: m[partner.id] }));
+
+  res.json({
+    today,
+    prompt,
+    iAnswered,
+    revealed,
+    myBody: mineToday || '',
+    partnerBody: revealed ? theirsToday : null,
+    partnerName: partner?.display_name || 'them',
+    streak,
+    recent,
+  });
+});
+
+router.post('/daily', requireUser, async (req, res) => {
+  const body = (req.body?.body || '').trim();
+  if (!body) return res.status(400).json({ error: 'Write your answer.' });
+  const existing = await query('SELECT 1 FROM daily_answer WHERE day = CURRENT_DATE AND user_id = $1', [req.user.id]);
+  if (existing.rows[0]) return res.status(409).json({ error: 'You already answered today.' });
+  await query('INSERT INTO daily_answer (day, user_id, body) VALUES (CURRENT_DATE, $1, $2)', [req.user.id, body]);
+  const partner = await partnerOf(req.user.id);
+  const p = partner
+    ? await query('SELECT 1 FROM daily_answer WHERE day = CURRENT_DATE AND user_id = $1', [partner.id])
+    : { rows: [] };
+  const revealed = p.rows.length > 0;
+  await logActivity(req.user.id, 'daily_answered', 'daily', 'today', { revealed });
+  if (partner)
+    notify(partner.id, {
+      title: revealed
+        ? `${req.user.display_name} answered — today’s question is revealed`
+        : `${req.user.display_name} answered today’s question`,
+      body: '',
+    });
+  res.status(201).json({ ok: true, revealed });
+});
 
 // Played keys + the shared "Knowing You" points total.
 router.get('/games/used', requireUser, async (_req, res) => {

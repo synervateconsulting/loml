@@ -196,6 +196,17 @@ CREATE TABLE IF NOT EXISTS game_points (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- The daily question: both partners answer the same date-derived prompt, blind
+-- until both are in. One answer per person per day.
+CREATE TABLE IF NOT EXISTS daily_answer (
+  id           BIGSERIAL PRIMARY KEY,
+  day          DATE NOT NULL,
+  user_id      INTEGER NOT NULL REFERENCES app_user(id),
+  body         TEXT NOT NULL DEFAULT '',
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (day, user_id)
+);
+
 -- Which game prompts/templates the two of you have already played. Couple-wide
 -- (this app is a single couple), keyed by a stable id like 'deck:playful:2' or
 -- 'tt:food'. Presence just drives a "Played" tag; sets stay replayable.

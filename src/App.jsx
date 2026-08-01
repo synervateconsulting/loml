@@ -9,6 +9,7 @@ import ListsView from './components/ListsView.jsx';
 import GamesView from './components/GamesView.jsx';
 import CalendarView from './components/CalendarView.jsx';
 import Countdown from './components/Countdown.jsx';
+import { DailyCard, DailyModal } from './components/Daily.jsx';
 import {
   ShareModal,
   RespondModal,
@@ -35,6 +36,7 @@ export default function App() {
   const [calendar, setCalendar] = useState({ events: [], notifications: { needsAck: [], acknowledged: [] } });
   const [usedGames, setUsedGames] = useState([]);
   const [knowingPoints, setKnowingPoints] = useState(0);
+  const [daily, setDaily] = useState(null);
   const [tab, setTab] = useState('theirs');
   const [view, setView] = useState('shares');
   const [modal, setModal] = useState(null);
@@ -49,17 +51,19 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      const [questions, coupleState, cal, used] = await Promise.all([
+      const [questions, coupleState, cal, used, dailyState] = await Promise.all([
         api.questions(),
         api.couple(),
         api.calendar(),
         api.gamesUsed(),
+        api.daily(),
       ]);
       setData(questions);
       setCouple(coupleState);
       setCalendar(cal);
       setUsedGames(used?.keys || []);
       setKnowingPoints(used?.knowingPoints || 0);
+      setDaily(dailyState);
       setError('');
     } catch (err) {
       setError(err.message);
@@ -193,6 +197,7 @@ export default function App() {
     setCalendar({ events: [], notifications: { needsAck: [], acknowledged: [] } });
     setUsedGames([]);
     setKnowingPoints(0);
+    setDaily(null);
     setView('shares');
   };
 
@@ -354,6 +359,7 @@ export default function App() {
             {calendar.notifications?.needsAck?.length > 0 && <span className="dot" aria-label="calendar updates" />}
           </button>
         </div>
+        <DailyCard daily={daily} onOpen={() => setModal({ kind: 'daily' })} />
         <button
           type="button"
           className="btn btn--primary btn--wide"
@@ -510,6 +516,7 @@ export default function App() {
       {modal?.kind === 'countdown' && (
         <CountdownModal countdown={couple?.countdown} onClose={close} onDone={finish} />
       )}
+      {modal?.kind === 'daily' && <DailyModal daily={daily} onClose={close} onAnswered={finish} />}
     </div>
   );
 }

@@ -37,6 +37,8 @@ export const api = {
   markSeen: (kind, id) => request('POST', '/seen', { kind, id }),
   couple: () => request('GET', '/couple'),
   gamesUsed: () => request('GET', '/games/used'),
+  daily: () => request('GET', '/daily'),
+  answerDaily: (body) => request('POST', '/daily', { body }),
   // fields: { kind, title, startsAt, allDay }
   setCountdown: (fields) => request('POST', '/couple/countdown', fields),
   clearCountdown: () => request('POST', '/couple/countdown', { clear: true }),
