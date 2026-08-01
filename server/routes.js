@@ -3,7 +3,7 @@ import multer from 'multer';
 import { query, keyMatches, logActivity, pool } from './db.js';
 import { startSession, endSession, requireUser, partnerOf } from './auth.js';
 import { publicKey, saveSubscription, notify } from './push.js';
-import { promptForDay } from './daily.js';
+import { promptForDay, appToday } from './daily.js';
 
 // Copy for the push banners.
 const newShareTitle = (name, kind) =>
@@ -1051,13 +1051,12 @@ const fmtDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,
 
 router.get('/daily', requireUser, async (req, res) => {
   const partner = await partnerOf(req.user.id);
-  const { rows: t } = await query("SELECT to_char(CURRENT_DATE, 'YYYY-MM-DD') AS today");
-  const today = t[0].today;
+  const today = appToday();
   const prompt = promptForDay(today);
 
   const { rows } = await query(
-    "SELECT to_char(day, 'YYYY-MM-DD') AS day, user_id, body FROM daily_answer WHERE day > CURRENT_DATE - INTERVAL '45 days' ORDER BY day DESC",
-    []
+    "SELECT to_char(day, 'YYYY-MM-DD') AS day, user_id, body FROM daily_answer WHERE day > $1::date - INTERVAL '45 days' ORDER BY day DESC",
+    [today]
   );
   const byDay = new Map();
   for (const r of rows) {
@@ -1102,10 +1101,10 @@ router.get('/daily', requireUser, async (req, res) => {
 // recent first, with each person's answer state.
 router.get('/daily/history', requireUser, async (req, res) => {
   const partner = await partnerOf(req.user.id);
-  const { rows: t } = await query("SELECT to_char(CURRENT_DATE, 'YYYY-MM-DD') AS today");
-  const today = t[0].today;
+  const today = appToday();
   const { rows } = await query(
-    "SELECT to_char(day, 'YYYY-MM-DD') AS day, user_id, body FROM daily_answer WHERE day > CURRENT_DATE - INTERVAL '75 days' ORDER BY day"
+    "SELECT to_char(day, 'YYYY-MM-DD') AS day, user_id, body FROM daily_answer WHERE day > $1::date - INTERVAL '75 days' ORDER BY day",
+    [today]
   );
   const byDay = new Map();
   for (const r of rows) {
@@ -1146,12 +1145,13 @@ router.get('/daily/history', requireUser, async (req, res) => {
 router.post('/daily', requireUser, async (req, res) => {
   const body = (req.body?.body || '').trim();
   if (!body) return res.status(400).json({ error: 'Write your answer.' });
-  const existing = await query('SELECT 1 FROM daily_answer WHERE day = CURRENT_DATE AND user_id = $1', [req.user.id]);
+  const today = appToday();
+  const existing = await query('SELECT 1 FROM daily_answer WHERE day = $1::date AND user_id = $2', [today, req.user.id]);
   if (existing.rows[0]) return res.status(409).json({ error: 'You already answered today.' });
-  await query('INSERT INTO daily_answer (day, user_id, body) VALUES (CURRENT_DATE, $1, $2)', [req.user.id, body]);
+  await query('INSERT INTO daily_answer (day, user_id, body) VALUES ($1::date, $2, $3)', [today, req.user.id, body]);
   const partner = await partnerOf(req.user.id);
   const p = partner
-    ? await query('SELECT 1 FROM daily_answer WHERE day = CURRENT_DATE AND user_id = $1', [partner.id])
+    ? await query('SELECT 1 FROM daily_answer WHERE day = $1::date AND user_id = $2', [today, partner.id])
     : { rows: [] };
   const revealed = p.rows.length > 0;
   await logActivity(req.user.id, 'daily_answered', 'daily', 'today', { revealed });

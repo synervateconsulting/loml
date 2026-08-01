@@ -23,6 +23,27 @@ export const DAILY_QUESTIONS = [
   'What’s something you want to tell me but keep forgetting?',
 ];
 
+// The couple's timezone — drives when "today" rolls over and when reminders
+// fire. Set APP_TZ on the host (e.g. "America/New_York") to match where you are.
+export const APP_TZ = process.env.APP_TZ || process.env.TZ || 'America/New_York';
+
+// Today's date in the couple's timezone, as 'YYYY-MM-DD' (en-CA gives ISO order).
+export const appToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: APP_TZ }).format(new Date());
+
+// Current wall-clock { hour, minute } in the couple's timezone.
+export const appClock = () => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: APP_TZ,
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  }).formatToParts(new Date());
+  const get = (t) => Number(parts.find((p) => p.type === t)?.value);
+  let hour = get('hour');
+  if (hour === 24) hour = 0; // some environments render midnight as 24
+  return { hour, minute: get('minute') };
+};
+
 // Stable hash of a 'YYYY-MM-DD' string → pool index. Same date → same prompt.
 export function promptForDay(day) {
   let h = 0;

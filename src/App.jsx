@@ -79,8 +79,9 @@ export default function App() {
 
   useEffect(() => {
     const waiting = data.received.filter((q) => q.status === 'open').length;
-    syncBadge(waiting + (calendar.notifications?.needsAck?.length || 0));
-  }, [data.received, calendar]);
+    const dailyPending = daily && !daily.iAnswered ? 1 : 0;
+    syncBadge(waiting + (calendar.notifications?.needsAck?.length || 0) + dailyPending);
+  }, [data.received, calendar, daily]);
 
   // Re-cover the spicy tab every time you leave it, so it always asks again.
   useEffect(() => {
