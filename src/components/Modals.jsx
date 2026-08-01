@@ -99,7 +99,7 @@ function useScrollLock() {
   }, []);
 }
 
-function Modal({ title, eyebrow, children, footer, onScrimClick }) {
+export function Modal({ title, eyebrow, children, footer, onScrimClick }) {
   useScrollLock();
   return (
     <div className="scrim" role="dialog" aria-modal="true" onMouseDown={onScrimClick}>

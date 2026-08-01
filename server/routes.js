@@ -20,6 +20,22 @@ const replyTitle = (name, kind) =>
 const discreetShare = (name) => ({ title: `${name} sent you something 🔥`, body: '' });
 const discreetReply = (name) => ({ title: `${name} replied 🔥`, body: '' });
 
+const EVENT_KINDS = ['vacation', 'appointment', 'work_trip', 'date_night', 'other'];
+const EVENT_VERB = { created: 'added', edited: 'updated', commented: 'commented on', reacted: 'reacted to' };
+
+// Tell the other person about a calendar action, and push it.
+async function notifyEvent(eventId, actor, action, eventTitle) {
+  const partner = await partnerOf(actor.id);
+  if (!partner) return;
+  await query('INSERT INTO event_notification (event_id, to_id, from_id, action) VALUES ($1, $2, $3, $4)', [
+    eventId,
+    partner.id,
+    actor.id,
+    action,
+  ]);
+  notify(partner.id, { title: `${actor.name} ${EVENT_VERB[action] || 'updated'} an event`, body: eventTitle });
+}
+
 const router = express.Router();
 
 // Express 4 does not catch rejected promises from async handlers. Wrap them all.
@@ -753,14 +769,24 @@ const REACTION_EMOJI = ['❤️', '🔥', '😈', '😂', '🥹', '👀'];
 
 router.post('/reactions', requireUser, async (req, res) => {
   const { targetKind, targetId, emoji } = req.body || {};
-  if (!['question', 'response', 'reveal'].includes(targetKind))
+  if (!['question', 'response', 'reveal', 'event'].includes(targetKind))
     return res.status(400).json({ error: 'Bad target.' });
 
   // Confirm the target is part of a share you're in, and figure out whether
-  // you authored it — you can't react to your own.
+  // you authored it — you can't react to your own (except calendar events).
   let member = false;
   let isAuthor = false;
-  if (targetKind === 'question') {
+  let eventTitle = null;
+  if (targetKind === 'event') {
+    // Calendar events are shared; reacting to your own is fine.
+    const { rows } = await query('SELECT title FROM calendar_event WHERE id = $1 AND is_removed = false', [
+      targetId,
+    ]);
+    if (rows[0]) {
+      member = true;
+      eventTitle = rows[0].title;
+    }
+  } else if (targetKind === 'question') {
     const { rows } = await query('SELECT asker_id, recipient_id FROM question WHERE id = $1', [targetId]);
     const q = rows[0];
     if (q && (q.asker_id === req.user.id || q.recipient_id === req.user.id)) {
@@ -814,6 +840,8 @@ router.post('/reactions', requireUser, async (req, res) => {
      ON CONFLICT (user_id, target_kind, target_id) DO UPDATE SET emoji = EXCLUDED.emoji, created_at = now()`,
     [req.user.id, targetKind, targetId, emoji]
   );
+  if (targetKind === 'event')
+    await notifyEvent(targetId, asUser(req.user.id, req.user.display_name), 'reacted', eventTitle);
   res.json({ ok: true, emoji });
 });
 
@@ -971,6 +999,182 @@ router.post('/lists/:id/remove', requireUser, async (req, res) => {
 
 router.post('/list-items/:id/remove', requireUser, async (req, res) => {
   await query('UPDATE list_item SET is_removed = true WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+/* -------------------------------------------------------------- calendar */
+
+const STARTS_AT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+const asUser = (id, name) => ({ id, name });
+
+// Everything the two of you can see: all events (with reactions + comments) and
+// this person's calendar notifications, in one call.
+router.get('/calendar', requireUser, async (req, res) => {
+  const events = await query(
+    `SELECT e.id, e.kind, e.title,
+            to_char(e.starts_at, 'YYYY-MM-DD"T"HH24:MI') AS starts_at,
+            e.description, e.location,
+            e.created_by, cu.display_name AS created_name, e.created_at,
+            e.updated_by, uu.display_name AS updated_name, e.updated_at
+       FROM calendar_event e
+       JOIN app_user cu ON cu.id = e.created_by
+       JOIN app_user uu ON uu.id = e.updated_by
+      WHERE e.is_removed = false
+      ORDER BY e.starts_at`
+  );
+  const ids = events.rows.map((e) => e.id);
+  const reactions = ids.length
+    ? (
+        await query(
+          "SELECT user_id, target_id, emoji FROM reaction WHERE target_kind = 'event' AND target_id = ANY($1::uuid[])",
+          [ids]
+        )
+      ).rows
+    : [];
+  const comments = ids.length
+    ? (
+        await query(
+          `SELECT c.id, c.event_id, c.user_id, u.display_name AS user_name, c.body, c.created_at
+             FROM event_comment c JOIN app_user u ON u.id = c.user_id
+            WHERE c.event_id = ANY($1::uuid[]) AND c.is_removed = false
+            ORDER BY c.created_at`,
+          [ids]
+        )
+      ).rows
+    : [];
+
+  const shaped = events.rows.map((e) => ({
+    id: e.id,
+    kind: e.kind,
+    title: e.title,
+    startsAt: e.starts_at,
+    description: e.description,
+    location: e.location,
+    createdBy: asUser(e.created_by, e.created_name),
+    createdAt: e.created_at,
+    updatedBy: asUser(e.updated_by, e.updated_name),
+    updatedAt: e.updated_at,
+    reactions: reactions
+      .filter((r) => r.target_id === e.id)
+      .map((r) => ({ userId: r.user_id, emoji: r.emoji })),
+    comments: comments
+      .filter((c) => c.event_id === e.id)
+      .map((c) => ({ id: c.id, userId: c.user_id, userName: c.user_name, body: c.body, createdAt: c.created_at })),
+  }));
+
+  const notes = await query(
+    `SELECT n.id, n.action, n.acknowledged, n.acknowledged_at, n.created_at,
+            u.display_name AS from_name,
+            e.id AS event_id, e.title AS event_title, e.kind AS event_kind, e.is_removed AS event_removed,
+            to_char(e.starts_at, 'YYYY-MM-DD"T"HH24:MI') AS event_starts_at
+       FROM event_notification n
+       JOIN app_user u ON u.id = n.from_id
+       JOIN calendar_event e ON e.id = n.event_id
+      WHERE n.to_id = $1
+      ORDER BY n.created_at DESC`,
+    [req.user.id]
+  );
+  const shapeNote = (n) => ({
+    id: n.id,
+    action: n.action,
+    fromName: n.from_name,
+    createdAt: n.created_at,
+    acknowledgedAt: n.acknowledged_at,
+    event: {
+      id: n.event_id,
+      title: n.event_title,
+      kind: n.event_kind,
+      startsAt: n.event_starts_at,
+      removed: n.event_removed,
+    },
+  });
+
+  res.json({
+    events: shaped,
+    notifications: {
+      needsAck: notes.rows.filter((n) => !n.acknowledged).map(shapeNote),
+      acknowledged: notes.rows.filter((n) => n.acknowledged).map(shapeNote),
+    },
+  });
+});
+
+router.post('/calendar/events', requireUser, async (req, res) => {
+  const kind = EVENT_KINDS.includes(req.body?.kind) ? req.body.kind : null;
+  const title = (req.body?.title || '').trim();
+  const startsAt = (req.body?.startsAt || '').trim();
+  const description = (req.body?.description || '').trim();
+  const location = (req.body?.location || '').trim();
+  if (!kind) return res.status(400).json({ error: 'Pick an event type.' });
+  if (!title) return res.status(400).json({ error: 'Give it a title.' });
+  if (!STARTS_AT_RE.test(startsAt)) return res.status(400).json({ error: 'Pick a date and time.' });
+
+  const { rows } = await query(
+    `INSERT INTO calendar_event (kind, title, starts_at, description, location, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING id`,
+    [kind, title, startsAt, description, location, req.user.id]
+  );
+  await logActivity(req.user.id, 'created_event', 'event', rows[0].id, { title });
+  await notifyEvent(rows[0].id, asUser(req.user.id, req.user.display_name), 'created', title);
+  res.status(201).json({ id: rows[0].id });
+});
+
+router.patch('/calendar/events/:id', requireUser, async (req, res) => {
+  const { rows } = await query('SELECT * FROM calendar_event WHERE id = $1 AND is_removed = false', [
+    req.params.id,
+  ]);
+  const ev = rows[0];
+  if (!ev) return res.status(404).json({ error: 'Event not found.' });
+
+  const kind = EVENT_KINDS.includes(req.body?.kind) ? req.body.kind : ev.kind;
+  const title = (req.body?.title || '').trim();
+  const startsAt = (req.body?.startsAt || '').trim();
+  const description = (req.body?.description || '').trim();
+  const location = (req.body?.location || '').trim();
+  if (!title) return res.status(400).json({ error: 'Give it a title.' });
+  if (!STARTS_AT_RE.test(startsAt)) return res.status(400).json({ error: 'Pick a date and time.' });
+
+  await query(
+    `UPDATE calendar_event
+        SET kind = $1, title = $2, starts_at = $3, description = $4, location = $5,
+            updated_by = $6, updated_at = now()
+      WHERE id = $7`,
+    [kind, title, startsAt, description, location, req.user.id, ev.id]
+  );
+  await logActivity(req.user.id, 'edited_event', 'event', ev.id, { title });
+  await notifyEvent(ev.id, asUser(req.user.id, req.user.display_name), 'edited', title);
+  res.json({ ok: true });
+});
+
+router.post('/calendar/events/:id/remove', requireUser, async (req, res) => {
+  await query(
+    'UPDATE calendar_event SET is_removed = true, updated_by = $1, updated_at = now() WHERE id = $2',
+    [req.user.id, req.params.id]
+  );
+  await logActivity(req.user.id, 'removed_event', 'event', req.params.id);
+  res.json({ ok: true });
+});
+
+router.post('/calendar/events/:id/comments', requireUser, async (req, res) => {
+  const body = (req.body?.body || '').trim();
+  if (!body) return res.status(400).json({ error: 'Say something first.' });
+  const { rows } = await query('SELECT id, title FROM calendar_event WHERE id = $1 AND is_removed = false', [
+    req.params.id,
+  ]);
+  const ev = rows[0];
+  if (!ev) return res.status(404).json({ error: 'Event not found.' });
+  const inserted = await query(
+    'INSERT INTO event_comment (event_id, user_id, body) VALUES ($1, $2, $3) RETURNING id',
+    [req.params.id, req.user.id, body]
+  );
+  await notifyEvent(ev.id, asUser(req.user.id, req.user.display_name), 'commented', ev.title);
+  res.status(201).json({ id: inserted.rows[0].id });
+});
+
+router.post('/calendar/notifications/:id/ack', requireUser, async (req, res) => {
+  await query(
+    'UPDATE event_notification SET acknowledged = true, acknowledged_at = now() WHERE id = $1 AND to_id = $2 AND acknowledged = false',
+    [req.params.id, req.user.id]
+  );
   res.json({ ok: true });
 });
 

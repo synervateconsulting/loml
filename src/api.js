@@ -43,6 +43,12 @@ export const api = {
   removeListItem: (id) => request('POST', `/list-items/${id}/remove`),
   removeAttachment: (id) => request('POST', `/attachments/${id}/remove`),
   history: (questionId) => request('GET', `/questions/${questionId}/history`),
+  calendar: () => request('GET', '/calendar'),
+  createEvent: (fields) => request('POST', '/calendar/events', fields),
+  editEvent: (id, fields) => request('PATCH', `/calendar/events/${id}`, fields),
+  removeEvent: (id) => request('POST', `/calendar/events/${id}/remove`),
+  commentEvent: (id, body) => request('POST', `/calendar/events/${id}/comments`, { body }),
+  ackEventNotification: (id) => request('POST', `/calendar/notifications/${id}/ack`),
   uploadAttachment: async ({ ownerKind, questionId, responseId, file, fileName, mimeType, durationSecs }) => {
     const form = new FormData();
     form.append('ownerKind', ownerKind);
