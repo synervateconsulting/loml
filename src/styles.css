@@ -943,8 +943,8 @@ body::before {
 
 /* new game badges */
 .kindtag--predict {
-  color: #9fb8e0;
-  border-color: rgba(159, 184, 224, 0.4);
+  color: #9bcf7e;
+  border-color: rgba(155, 207, 126, 0.4);
 }
 .kindtag--guess {
   color: #d99fc4;

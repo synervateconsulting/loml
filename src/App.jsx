@@ -336,6 +336,7 @@ export default function App() {
             </button>
           </div>
         </div>
+        <DailyCard daily={daily} onOpen={() => setModal({ kind: 'daily' })} />
         <div className="countdownrow">
           {couple?.countdown ? (
             <Countdown
@@ -359,7 +360,6 @@ export default function App() {
             {calendar.notifications?.needsAck?.length > 0 && <span className="dot" aria-label="calendar updates" />}
           </button>
         </div>
-        <DailyCard daily={daily} onOpen={() => setModal({ kind: 'daily' })} />
         <button
           type="button"
           className="btn btn--primary btn--wide"
