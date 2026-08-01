@@ -286,10 +286,8 @@ export default function CalendarView({ events, notifications, meId, partner, onC
   for (let i = 0; i < firstWeekday; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
-  const openDay = (key) => {
-    if (eventsOn(key).length) setDayKey(key);
-    else setEdit({ isNew: true, date: key });
-  };
+  // Always show the day (even an empty one); you add from there.
+  const openDay = (key) => setDayKey(key);
 
   const openEvent = (id) => {
     setDayKey(null);
@@ -422,19 +420,23 @@ export default function CalendarView({ events, notifications, meId, partner, onC
             </div>
           }
         >
-          <ul className="evlist">
-            {eventsOn(dayKey).map((e) => (
-              <li key={e.id}>
-                <button type="button" className="evrow" onClick={() => openEvent(e.id)}>
-                  <span className="evrow__icon">{eventIcon(e.kind)}</span>
-                  <span className="evrow__body">
-                    <span className="evrow__title">{e.title}</span>
-                    <span className="evrow__time">{formatEventWhen(e.startsAt)}</span>
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          {eventsOn(dayKey).length === 0 ? (
+            <p className="empty">Nothing on this day yet. Add something below.</p>
+          ) : (
+            <ul className="evlist">
+              {eventsOn(dayKey).map((e) => (
+                <li key={e.id}>
+                  <button type="button" className="evrow" onClick={() => openEvent(e.id)}>
+                    <span className="evrow__icon">{eventIcon(e.kind)}</span>
+                    <span className="evrow__body">
+                      <span className="evrow__title">{e.title}</span>
+                      <span className="evrow__time">{formatEventWhen(e.startsAt)}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </Modal>
       )}
 
