@@ -514,11 +514,9 @@ body::before {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  /* No backdrop-filter: on iOS Safari it spawns a compositing layer that
-     fails to paint the sheet's content when the sheet animates in fresh
-     (e.g. opened straight from the Upcoming tab) — the fields are there and
-     tappable but render blank. A more opaque scrim gives the same dimming. */
-  background: rgba(10, 4, 7, 0.8);
+  background: rgba(12, 5, 9, 0.66);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
 }
 
 .scrim--confirm {

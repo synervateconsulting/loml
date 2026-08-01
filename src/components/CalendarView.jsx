@@ -202,9 +202,10 @@ function EventEditor({ event, defaultDate, partner, isCountdown, onClose, onSave
 
 /* -------------------------------------------------------------- event viewer */
 
-function EventViewer({ event, meId, onEdit, onClose, onChanged }) {
+function EventViewer({ event, meId, partner, isCountdown, onEdit, onClose, onChanged }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [confirmCountdown, setConfirmCountdown] = useState(false);
 
   if (!event) {
     return (
@@ -227,9 +228,19 @@ function EventViewer({ event, meId, onEdit, onClose, onChanged }) {
     }
   };
 
+  const setAsCountdown = async () => {
+    try {
+      await api.selectCountdown(event.id);
+      await onChanged();
+    } catch {
+      /* nothing destructive happened; leave the viewer open */
+    }
+  };
+
   const edited = event.updatedAt !== event.createdAt || event.updatedBy.id !== event.createdBy.id;
 
   return (
+    <>
     <Modal
       onScrimClick={onClose}
       eyebrow={`${eventIcon(event.kind)} ${eventLabel(event.kind)}`}
@@ -257,6 +268,15 @@ function EventViewer({ event, meId, onEdit, onClose, onChanged }) {
           </>
         )}
       </p>
+      <div className="editoractions">
+        {isCountdown ? (
+          <span className="hint">★ This is your current countdown.</span>
+        ) : (
+          <button type="button" className="linkbtn" onClick={() => setConfirmCountdown(true)}>
+            ★ Set as our countdown
+          </button>
+        )}
+      </div>
       <Reactions targetKind="event" targetId={event.id} reactions={event.reactions} meId={meId} canReact />
       <hr className="rule" />
       <p className="eyebrow">Comments</p>
@@ -286,6 +306,22 @@ function EventViewer({ event, meId, onEdit, onClose, onChanged }) {
         </button>
       </div>
     </Modal>
+    {confirmCountdown && (
+      <Confirm
+        steps={[
+          {
+            title: 'Set as your countdown?',
+            body: `This will change the countdown for ${partner} too.`,
+            confirm: 'Set it',
+          },
+        ]}
+        onResolve={(ok) => {
+          setConfirmCountdown(false);
+          if (ok) setAsCountdown();
+        }}
+      />
+    )}
+    </>
   );
 }
 
@@ -516,6 +552,8 @@ export default function CalendarView({ events, notifications, countdownEventId, 
         <EventViewer
           event={viewingEvent}
           meId={meId}
+          partner={partner}
+          isCountdown={Boolean(viewingEvent && viewingEvent.id === countdownEventId)}
           onEdit={() => setEdit({ id: viewId })}
           onClose={() => setViewId(null)}
           onChanged={onChanged}
