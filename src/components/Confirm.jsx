@@ -14,8 +14,13 @@ export default function Confirm({ steps, onResolve }) {
   };
 
   return (
-    <div className="scrim scrim--confirm" role="dialog" aria-modal="true">
-      <div className="confirm">
+    <div
+      className="scrim scrim--confirm"
+      role="dialog"
+      aria-modal="true"
+      onMouseDown={() => onResolve(false)}
+    >
+      <div className="confirm" onMouseDown={(e) => e.stopPropagation()}>
         <p className="confirm__step">
           Step {index + 1} of {steps.length}
         </p>

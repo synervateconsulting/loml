@@ -883,6 +883,39 @@ body.scroll-locked {
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.calpanes {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.upcoming {
+  display: grid;
+  gap: 10px;
+}
+.upcoming .countdown {
+  margin: 0;
+}
+.editoractions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.countdown__tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(240, 178, 107, 0.2);
+  color: var(--candle);
+  font: 700 9px var(--body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  vertical-align: middle;
 }
 .pill {
   display: inline-flex;

@@ -14,10 +14,14 @@ export const eventLabel = (kind) => byKey(kind).label;
 // startsAt is a naive 'YYYY-MM-DDTHH:MM' wall-clock string.
 export const dayKeyOf = (startsAt) => (startsAt || '').slice(0, 10); // 'YYYY-MM-DD'
 
-export const formatEventWhen = (startsAt) => {
+export const formatEventWhen = (startsAt, allDay = false) => {
   if (!startsAt) return '';
   const [d, t] = startsAt.split('T');
   const [y, m, day] = d.split('-').map(Number);
+  if (allDay) {
+    const dt = new Date(y, m - 1, day);
+    return `${dt.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · All day`;
+  }
   const [hh, mm] = (t || '0:0').split(':').map(Number);
   const dt = new Date(y, m - 1, day, hh, mm);
   return dt.toLocaleString(undefined, {

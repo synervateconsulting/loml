@@ -873,29 +873,70 @@ router.post('/seen', requireUser, async (req, res) => {
 
 router.get('/couple', requireUser, async (_req, res) => {
   const { rows } = await query(
-    `SELECT countdown_title,
-            to_char(countdown_date, 'YYYY-MM-DD') AS countdown_date,
-            to_char(countdown_time, 'HH24:MI')    AS countdown_time
-       FROM couple_state WHERE id = 1`
+    `SELECT e.id AS event_id, e.kind, e.title, e.all_day,
+            to_char(e.starts_at, 'YYYY-MM-DD"T"HH24:MI') AS starts_at
+       FROM couple_state cs
+       JOIN calendar_event e ON e.id = cs.countdown_event_id AND e.is_removed = false
+      WHERE cs.id = 1`
   );
+  const c = rows[0];
   res.json({
-    countdownTitle: rows[0]?.countdown_title || null,
-    countdownDate: rows[0]?.countdown_date || null,
-    countdownTime: rows[0]?.countdown_time || null,
+    countdown: c
+      ? { eventId: c.event_id, kind: c.kind, title: c.title, startsAt: c.starts_at, allDay: c.all_day }
+      : null,
   });
 });
 
+// Create or edit the countdown's underlying calendar event (from the banner),
+// or clear the selection. Editing/creating notifies the partner like any event.
 router.post('/couple/countdown', requireUser, async (req, res) => {
+  if (req.body?.clear) {
+    await query('UPDATE couple_state SET countdown_event_id = NULL WHERE id = 1');
+    return res.json({ ok: true });
+  }
+  const kind = EVENT_KINDS.includes(req.body?.kind) ? req.body.kind : 'other';
   const title = (req.body?.title || '').trim();
-  const date = req.body?.date || null; // 'YYYY-MM-DD', or null/empty to clear
-  const time = date ? req.body?.time || null : null; // 'HH:MM', optional; cleared with the date
-  await query(
-    `UPDATE couple_state
-        SET countdown_title = $1, countdown_date = $2, countdown_time = $3,
-            updated_by = $4, updated_at = now()
-      WHERE id = 1`,
-    [title || null, date || null, time, req.user.id]
+  const allDay = Boolean(req.body?.allDay);
+  const startsAt = (req.body?.startsAt || '').trim();
+  if (!title) return res.status(400).json({ error: 'Give it a title.' });
+  if (!STARTS_AT_RE.test(startsAt)) return res.status(400).json({ error: 'Pick a date.' });
+
+  const cur = await query(
+    `SELECT cs.countdown_event_id AS id
+       FROM couple_state cs
+       LEFT JOIN calendar_event e ON e.id = cs.countdown_event_id AND e.is_removed = false
+      WHERE cs.id = 1 AND e.id IS NOT NULL`
   );
+  const existingId = cur.rows[0]?.id || null;
+  const actor = asUser(req.user.id, req.user.display_name);
+
+  if (existingId) {
+    await query(
+      `UPDATE calendar_event SET kind = $1, title = $2, starts_at = $3, all_day = $4,
+              updated_by = $5, updated_at = now() WHERE id = $6`,
+      [kind, title, startsAt, allDay, req.user.id, existingId]
+    );
+    await notifyEvent(existingId, actor, 'edited', title);
+    return res.json({ ok: true, eventId: existingId });
+  }
+  const { rows } = await query(
+    `INSERT INTO calendar_event (kind, title, starts_at, all_day, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $5) RETURNING id`,
+    [kind, title, startsAt, allDay, req.user.id]
+  );
+  await query('UPDATE couple_state SET countdown_event_id = $1 WHERE id = 1', [rows[0].id]);
+  await notifyEvent(rows[0].id, actor, 'created', title);
+  res.status(201).json({ ok: true, eventId: rows[0].id });
+});
+
+// "Set as our countdown" — point the shared countdown at an existing event.
+router.post('/couple/countdown/select', requireUser, async (req, res) => {
+  const eventId = req.body?.eventId;
+  const { rows } = await query('SELECT id FROM calendar_event WHERE id = $1 AND is_removed = false', [
+    eventId,
+  ]);
+  if (!rows[0]) return res.status(404).json({ error: 'Event not found.' });
+  await query('UPDATE couple_state SET countdown_event_id = $1 WHERE id = 1', [eventId]);
   res.json({ ok: true });
 });
 
@@ -1012,7 +1053,7 @@ const asUser = (id, name) => ({ id, name });
 router.get('/calendar', requireUser, async (req, res) => {
   const events = await query(
     `SELECT e.id, e.kind, e.title,
-            to_char(e.starts_at, 'YYYY-MM-DD"T"HH24:MI') AS starts_at,
+            to_char(e.starts_at, 'YYYY-MM-DD"T"HH24:MI') AS starts_at, e.all_day,
             e.description, e.location,
             e.created_by, cu.display_name AS created_name, e.created_at,
             e.updated_by, uu.display_name AS updated_name, e.updated_at
@@ -1048,6 +1089,7 @@ router.get('/calendar', requireUser, async (req, res) => {
     kind: e.kind,
     title: e.title,
     startsAt: e.starts_at,
+    allDay: e.all_day,
     description: e.description,
     location: e.location,
     createdBy: asUser(e.created_by, e.created_name),
@@ -1101,17 +1143,18 @@ router.get('/calendar', requireUser, async (req, res) => {
 router.post('/calendar/events', requireUser, async (req, res) => {
   const kind = EVENT_KINDS.includes(req.body?.kind) ? req.body.kind : null;
   const title = (req.body?.title || '').trim();
+  const allDay = Boolean(req.body?.allDay);
   const startsAt = (req.body?.startsAt || '').trim();
   const description = (req.body?.description || '').trim();
   const location = (req.body?.location || '').trim();
   if (!kind) return res.status(400).json({ error: 'Pick an event type.' });
   if (!title) return res.status(400).json({ error: 'Give it a title.' });
-  if (!STARTS_AT_RE.test(startsAt)) return res.status(400).json({ error: 'Pick a date and time.' });
+  if (!STARTS_AT_RE.test(startsAt)) return res.status(400).json({ error: 'Pick a date.' });
 
   const { rows } = await query(
-    `INSERT INTO calendar_event (kind, title, starts_at, description, location, created_by, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING id`,
-    [kind, title, startsAt, description, location, req.user.id]
+    `INSERT INTO calendar_event (kind, title, starts_at, all_day, description, location, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $7) RETURNING id`,
+    [kind, title, startsAt, allDay, description, location, req.user.id]
   );
   await logActivity(req.user.id, 'created_event', 'event', rows[0].id, { title });
   await notifyEvent(rows[0].id, asUser(req.user.id, req.user.display_name), 'created', title);
@@ -1127,18 +1170,19 @@ router.patch('/calendar/events/:id', requireUser, async (req, res) => {
 
   const kind = EVENT_KINDS.includes(req.body?.kind) ? req.body.kind : ev.kind;
   const title = (req.body?.title || '').trim();
+  const allDay = Boolean(req.body?.allDay);
   const startsAt = (req.body?.startsAt || '').trim();
   const description = (req.body?.description || '').trim();
   const location = (req.body?.location || '').trim();
   if (!title) return res.status(400).json({ error: 'Give it a title.' });
-  if (!STARTS_AT_RE.test(startsAt)) return res.status(400).json({ error: 'Pick a date and time.' });
+  if (!STARTS_AT_RE.test(startsAt)) return res.status(400).json({ error: 'Pick a date.' });
 
   await query(
     `UPDATE calendar_event
-        SET kind = $1, title = $2, starts_at = $3, description = $4, location = $5,
-            updated_by = $6, updated_at = now()
-      WHERE id = $7`,
-    [kind, title, startsAt, description, location, req.user.id, ev.id]
+        SET kind = $1, title = $2, starts_at = $3, all_day = $4, description = $5, location = $6,
+            updated_by = $7, updated_at = now()
+      WHERE id = $8`,
+    [kind, title, startsAt, allDay, description, location, req.user.id, ev.id]
   );
   await logActivity(req.user.id, 'edited_event', 'event', ev.id, { title });
   await notifyEvent(ev.id, asUser(req.user.id, req.user.display_name), 'edited', title);
@@ -1150,6 +1194,9 @@ router.post('/calendar/events/:id/remove', requireUser, async (req, res) => {
     'UPDATE calendar_event SET is_removed = true, updated_by = $1, updated_at = now() WHERE id = $2',
     [req.user.id, req.params.id]
   );
+  await query('UPDATE couple_state SET countdown_event_id = NULL WHERE id = 1 AND countdown_event_id = $1', [
+    req.params.id,
+  ]);
   await logActivity(req.user.id, 'removed_event', 'event', req.params.id);
   res.json({ ok: true });
 });
