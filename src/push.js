@@ -69,3 +69,19 @@ export async function syncBadge(count) {
     /* unsupported */
   }
 }
+
+// Close any notifications still sitting in the tray. On iOS a lingering
+// delivered notification can keep the icon badge pinned even after you've dealt
+// with the item, so clearing them is part of getting the badge back in sync.
+export async function clearDeliveredNotifications() {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (reg?.getNotifications) {
+      const notes = await reg.getNotifications();
+      notes.forEach((n) => n.close());
+    }
+  } catch {
+    /* ignore */
+  }
+}

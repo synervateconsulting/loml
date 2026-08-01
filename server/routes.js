@@ -6,14 +6,19 @@ import { publicKey, saveSubscription, notify } from './push.js';
 
 // Copy for the push banners.
 const newShareTitle = (name, kind) =>
-  kind === 'memory'
-    ? `${name} shared a memory`
-    : kind === 'note'
-      ? `${name} left you a note`
-      : `${name} asked you something`;
+  ({
+    memory: `${name} shared a memory`,
+    note: `${name} left you a note`,
+    song: `${name} shared a song`,
+    reveal: `${name} wants to answer something together`,
+  })[kind] || `${name} asked you something`;
 
 const replyTitle = (name, kind) =>
   kind === 'question' ? `${name} answered` : `${name} acknowledged your ${kind}`;
+
+// Spicy pushes never reveal content — no title/body preview on the lock screen.
+const discreetShare = (name) => ({ title: `${name} sent you something 🔥`, body: '' });
+const discreetReply = (name) => ({ title: `${name} replied 🔥`, body: '' });
 
 const router = express.Router();
 
@@ -124,16 +129,17 @@ router.post('/push/subscribe', requireUser, async (req, res) => {
 
 /* -------------------------------------------------------------- questions */
 
-const SHARE_KINDS = ['question', 'memory', 'note'];
+const SHARE_KINDS = ['question', 'memory', 'note', 'song', 'reveal'];
 
 const QUESTION_SELECT = `
-  SELECT q.id, q.kind, q.title, q.detail, q.status, q.version, q.created_at, q.updated_at,
+  SELECT q.id, q.kind, q.title, q.detail, q.link, q.status, q.version,
+         q.is_keepsake, q.is_spicy, q.seen_at, q.created_at, q.updated_at,
          q.asker_id, q.recipient_id,
          asker.display_name  AS asker_name,
          recip.display_name  AS recipient_name,
          r.id AS response_id, r.body AS response_body, r.version AS response_version,
          r.created_at AS response_created_at, r.updated_at AS response_updated_at,
-         r.responder_id
+         r.responder_id, r.seen_at AS response_seen_at
     FROM question q
     JOIN app_user asker ON asker.id = q.asker_id
     JOIN app_user recip ON recip.id = q.recipient_id
@@ -160,22 +166,80 @@ async function attachmentsFor(questionIds, responseIds) {
   });
 }
 
-function shapeQuestion(row, attachments) {
+async function reactionsFor(questionIds, responseIds) {
+  if (!questionIds.length && !responseIds.length) return [];
+  const { rows } = await query(
+    `SELECT user_id, target_kind, target_id, emoji FROM reaction
+      WHERE (target_kind = 'question' AND target_id = ANY($1::uuid[]))
+         OR (target_kind = 'response' AND target_id = ANY($2::uuid[]))`,
+    [questionIds, responseIds]
+  );
+  return rows;
+}
+
+async function revealAnswersFor(questionIds) {
+  if (!questionIds.length) return [];
+  const { rows } = await query(
+    'SELECT question_id, user_id, body FROM reveal_answer WHERE question_id = ANY($1::uuid[])',
+    [questionIds]
+  );
+  return rows;
+}
+
+async function keepersFor(questionIds) {
+  if (!questionIds.length) return [];
+  const { rows } = await query(
+    'SELECT question_id, user_id FROM keepsake WHERE question_id = ANY($1::uuid[])',
+    [questionIds]
+  );
+  return rows;
+}
+
+const reactionsOn = (reactions, kind, id) =>
+  reactions.filter((x) => x.target_kind === kind && x.target_id === id).map((x) => ({ userId: x.user_id, emoji: x.emoji }));
+
+function shapeQuestion(row, ctx) {
+  const { attachments, reactions, revealAnswers, keepers, viewerId, partnerId } = ctx;
   const qAtt = attachments.filter((a) => a.question_id === row.id);
   const rAtt = attachments.filter((a) => row.response_id && a.response_id === row.response_id);
+
+  // Reveal prompts: the partner's blind answer stays hidden until both are in.
+  let reveal = null;
+  if (row.kind === 'reveal') {
+    const answers = revealAnswers.filter((a) => a.question_id === row.id);
+    const mine = answers.find((a) => a.user_id === viewerId);
+    const revealed = answers.length >= 2;
+    const byAsker = answers.find((a) => a.user_id === row.asker_id);
+    const byRecip = answers.find((a) => a.user_id === row.recipient_id);
+    reveal = {
+      revealed,
+      iAnswered: Boolean(mine),
+      myBody: mine ? mine.body : '',
+      askerBody: revealed ? byAsker?.body ?? '' : null,
+      recipientBody: revealed ? byRecip?.body ?? '' : null,
+    };
+  }
+
   return {
     id: row.id,
     kind: row.kind || 'question',
     title: row.title,
     detail: row.detail,
+    link: row.link || null,
     status: row.status,
     version: row.version,
+    isSpicy: row.is_spicy,
+    keptByMe: keepers.some((k) => k.question_id === row.id && k.user_id === viewerId),
+    keptByPartner: keepers.some((k) => k.question_id === row.id && k.user_id === partnerId),
+    seenAt: row.seen_at,
+    reveal,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     askerId: row.asker_id,
     askerName: row.asker_name,
     recipientId: row.recipient_id,
     recipientName: row.recipient_name,
+    reactions: reactionsOn(reactions, 'question', row.id),
     attachments: qAtt.filter((a) => !a.is_removed),
     removedAttachmentCount: qAtt.filter((a) => a.is_removed).length,
     response: row.response_id
@@ -186,6 +250,8 @@ function shapeQuestion(row, attachments) {
           createdAt: row.response_created_at,
           updatedAt: row.response_updated_at,
           responderId: row.responder_id,
+          seenAt: row.response_seen_at,
+          reactions: reactionsOn(reactions, 'response', row.response_id),
           attachments: rAtt.filter((a) => !a.is_removed),
           removedAttachmentCount: rAtt.filter((a) => a.is_removed).length,
         }
@@ -200,11 +266,17 @@ router.get('/questions', requireUser, async (req, res) => {
      ORDER BY q.created_at DESC`,
     [req.user.id]
   );
-  const attachments = await attachmentsFor(
-    rows.map((r) => r.id),
-    rows.filter((r) => r.response_id).map((r) => r.response_id)
-  );
-  const shaped = rows.map((r) => shapeQuestion(r, attachments));
+  const qIds = rows.map((r) => r.id);
+  const rIds = rows.filter((r) => r.response_id).map((r) => r.response_id);
+  const [attachments, reactions, revealAnswers, keepers, partner] = await Promise.all([
+    attachmentsFor(qIds, rIds),
+    reactionsFor(qIds, rIds),
+    revealAnswersFor(rows.filter((r) => r.kind === 'reveal').map((r) => r.id)),
+    keepersFor(qIds),
+    partnerOf(req.user.id),
+  ]);
+  const ctx = { attachments, reactions, revealAnswers, keepers, viewerId: req.user.id, partnerId: partner?.id };
+  const shaped = rows.map((r) => shapeQuestion(r, ctx));
   res.json({
     asked: shaped.filter((q) => q.askerId === req.user.id),
     received: shaped.filter((q) => q.recipientId === req.user.id),
@@ -214,8 +286,13 @@ router.get('/questions', requireUser, async (req, res) => {
 router.post('/questions', requireUser, async (req, res) => {
   const title = (req.body?.title || '').trim();
   const detail = (req.body?.detail || '').trim();
+  const link = (req.body?.link || '').trim();
+  const revealAnswer = (req.body?.answer || '').trim(); // the asker's own blind answer
+  const spicy = Boolean(req.body?.spicy);
   const kind = SHARE_KINDS.includes(req.body?.kind) ? req.body.kind : 'question';
   if (!title) return res.status(400).json({ error: 'Give it a title.' });
+  if (kind === 'song' && !/^https?:\/\//i.test(link))
+    return res.status(400).json({ error: 'Paste a link to the song.' });
 
   const partner = await partnerOf(req.user.id);
   if (!partner) return res.status(500).json({ error: 'No partner profile found.' });
@@ -224,9 +301,9 @@ router.post('/questions', requireUser, async (req, res) => {
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `INSERT INTO question (asker_id, recipient_id, kind, title, detail)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [req.user.id, partner.id, kind, title, detail]
+      `INSERT INTO question (asker_id, recipient_id, kind, title, detail, link, is_spicy)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [req.user.id, partner.id, kind, title, detail, kind === 'song' ? link : null, spicy]
     );
     const id = rows[0].id;
     await client.query(
@@ -234,9 +311,20 @@ router.post('/questions', requireUser, async (req, res) => {
        VALUES ($1, 1, $2, $3, $4)`,
       [id, title, detail, req.user.id]
     );
+    // For a reveal prompt the asker answers blind up front; the recipient's
+    // answer unlocks both later.
+    if (kind === 'reveal') {
+      await client.query(
+        `INSERT INTO reveal_answer (question_id, user_id, body) VALUES ($1, $2, $3)`,
+        [id, req.user.id, revealAnswer]
+      );
+    }
     await client.query('COMMIT');
-    await logActivity(req.user.id, 'shared', 'question', id, { title, kind });
-    notify(partner.id, { title: newShareTitle(req.user.display_name, kind), body: title });
+    await logActivity(req.user.id, 'shared', 'question', id, { title, kind, spicy });
+    notify(
+      partner.id,
+      spicy ? discreetShare(req.user.display_name) : { title: newShareTitle(req.user.display_name, kind), body: title }
+    );
     res.status(201).json({ id });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -364,7 +452,10 @@ router.post('/questions/:id/response', requireUser, async (req, res) => {
     ]);
     await client.query('COMMIT');
     await logActivity(req.user.id, 'answered_question', 'response', responseId, { questionId: q.id });
-    notify(q.asker_id, { title: replyTitle(req.user.display_name, q.kind), body: q.title });
+    notify(
+      q.asker_id,
+      q.is_spicy ? discreetReply(req.user.display_name) : { title: replyTitle(req.user.display_name, q.kind), body: q.title }
+    );
     res.status(201).json({ id: responseId });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -546,6 +637,309 @@ router.post('/attachments/:id/restore', requireUser, async (req, res) => {
     [req.params.id]
   );
   await logActivity(req.user.id, 'restored_attachment', 'attachment', req.params.id);
+  res.json({ ok: true });
+});
+
+/* --------------------------------------------------- both answer, then reveal */
+
+// Submit your blind answer to a reveal prompt. The recipient's answer unlocks
+// both (the asker already answered at creation time).
+router.post('/questions/:id/reveal', requireUser, async (req, res) => {
+  const body = (req.body?.body || '').trim();
+  const { rows } = await query(
+    "SELECT * FROM question WHERE id = $1 AND is_removed = false AND kind = 'reveal'",
+    [req.params.id]
+  );
+  const q = rows[0];
+  if (!q) return res.status(404).json({ error: 'Not found.' });
+  if (q.asker_id !== req.user.id && q.recipient_id !== req.user.id)
+    return res.status(403).json({ error: "This isn't yours." });
+  const existing = await query('SELECT id FROM reveal_answer WHERE question_id = $1 AND user_id = $2', [
+    q.id,
+    req.user.id,
+  ]);
+  if (existing.rows[0]) return res.status(409).json({ error: 'You already answered this one.' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('INSERT INTO reveal_answer (question_id, user_id, body) VALUES ($1, $2, $3)', [
+      q.id,
+      req.user.id,
+      body,
+    ]);
+    const { rows: c } = await client.query(
+      'SELECT count(*)::int AS n FROM reveal_answer WHERE question_id = $1',
+      [q.id]
+    );
+    const revealed = c[0].n >= 2;
+    if (revealed)
+      await client.query("UPDATE question SET status = 'answered', updated_at = now() WHERE id = $1", [
+        q.id,
+      ]);
+    await client.query('COMMIT');
+    await logActivity(req.user.id, 'reveal_answered', 'question', q.id, { revealed });
+    const other = q.asker_id === req.user.id ? q.recipient_id : q.asker_id;
+    notify(
+      other,
+      q.is_spicy
+        ? discreetReply(req.user.display_name)
+        : revealed
+          ? { title: `${req.user.display_name} answered — it's revealed`, body: q.title }
+          : { title: `${req.user.display_name} wants to answer together`, body: q.title }
+    );
+    res.status(201).json({ ok: true, revealed });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+});
+
+/* ---------------------------------------------------------------- keepsakes */
+
+router.post('/questions/:id/keepsake', requireUser, async (req, res) => {
+  const { rows } = await query(
+    'SELECT asker_id, recipient_id FROM question WHERE id = $1 AND is_removed = false',
+    [req.params.id]
+  );
+  const q = rows[0];
+  if (!q) return res.status(404).json({ error: 'Not found.' });
+  if (q.asker_id !== req.user.id && q.recipient_id !== req.user.id)
+    return res.status(403).json({ error: 'Not yours.' });
+
+  const existing = await query('SELECT 1 FROM keepsake WHERE user_id = $1 AND question_id = $2', [
+    req.user.id,
+    req.params.id,
+  ]);
+  const next = !existing.rows[0];
+  if (next) {
+    await query(
+      'INSERT INTO keepsake (user_id, question_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [req.user.id, req.params.id]
+    );
+  } else {
+    await query('DELETE FROM keepsake WHERE user_id = $1 AND question_id = $2', [
+      req.user.id,
+      req.params.id,
+    ]);
+  }
+  await logActivity(req.user.id, next ? 'kept' : 'unkept', 'question', req.params.id);
+  res.json({ ok: true, keptByMe: next });
+});
+
+/* ---------------------------------------------------------------- reactions */
+
+const REACTION_EMOJI = ['❤️', '🔥', '😂', '🥹', '👀'];
+
+router.post('/reactions', requireUser, async (req, res) => {
+  const { targetKind, targetId, emoji } = req.body || {};
+  if (!['question', 'response'].includes(targetKind))
+    return res.status(400).json({ error: 'Bad target.' });
+
+  // Confirm the target is part of a share you're in, and figure out whether
+  // you authored it — you can't react to your own.
+  let member = false;
+  let isAuthor = false;
+  if (targetKind === 'question') {
+    const { rows } = await query('SELECT asker_id, recipient_id FROM question WHERE id = $1', [targetId]);
+    const q = rows[0];
+    if (q && (q.asker_id === req.user.id || q.recipient_id === req.user.id)) {
+      member = true;
+      isAuthor = q.asker_id === req.user.id;
+    }
+  } else {
+    const { rows } = await query(
+      `SELECT r.responder_id, q.asker_id, q.recipient_id
+         FROM response r JOIN question q ON q.id = r.question_id WHERE r.id = $1`,
+      [targetId]
+    );
+    const row = rows[0];
+    if (row && (row.asker_id === req.user.id || row.recipient_id === req.user.id)) {
+      member = true;
+      isAuthor = row.responder_id === req.user.id;
+    }
+  }
+  if (!member) return res.status(404).json({ error: 'Not found.' });
+  if (isAuthor) return res.status(403).json({ error: "You can't react to your own." });
+
+  const cur = await query(
+    'SELECT emoji FROM reaction WHERE user_id = $1 AND target_kind = $2 AND target_id = $3',
+    [req.user.id, targetKind, targetId]
+  );
+  // Tapping your current reaction (or sending none) clears it.
+  if (!emoji || cur.rows[0]?.emoji === emoji) {
+    await query('DELETE FROM reaction WHERE user_id = $1 AND target_kind = $2 AND target_id = $3', [
+      req.user.id,
+      targetKind,
+      targetId,
+    ]);
+    return res.json({ ok: true, emoji: null });
+  }
+  if (!REACTION_EMOJI.includes(emoji)) return res.status(400).json({ error: 'Unknown reaction.' });
+  await query(
+    `INSERT INTO reaction (user_id, target_kind, target_id, emoji) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (user_id, target_kind, target_id) DO UPDATE SET emoji = EXCLUDED.emoji, created_at = now()`,
+    [req.user.id, targetKind, targetId, emoji]
+  );
+  res.json({ ok: true, emoji });
+});
+
+/* -------------------------------------------------------------- seen, gently */
+
+router.post('/seen', requireUser, async (req, res) => {
+  const { kind, id } = req.body || {};
+  if (kind === 'question') {
+    // Only the recipient marks a share as seen.
+    await query(
+      'UPDATE question SET seen_at = now(), seen_by = $1 WHERE id = $2 AND recipient_id = $1 AND seen_at IS NULL',
+      [req.user.id, id]
+    );
+  } else if (kind === 'response') {
+    // Only the asker of the share marks its reply as seen.
+    await query(
+      `UPDATE response SET seen_at = now(), seen_by = $1
+        WHERE id = $2 AND seen_at IS NULL
+          AND question_id IN (SELECT id FROM question WHERE asker_id = $1)`,
+      [req.user.id, id]
+    );
+  } else {
+    return res.status(400).json({ error: 'Bad target.' });
+  }
+  res.json({ ok: true });
+});
+
+/* ---------------------------------------------------------- countdown (couple) */
+
+router.get('/couple', requireUser, async (_req, res) => {
+  const { rows } = await query(
+    `SELECT countdown_title,
+            to_char(countdown_date, 'YYYY-MM-DD') AS countdown_date,
+            to_char(countdown_time, 'HH24:MI')    AS countdown_time
+       FROM couple_state WHERE id = 1`
+  );
+  res.json({
+    countdownTitle: rows[0]?.countdown_title || null,
+    countdownDate: rows[0]?.countdown_date || null,
+    countdownTime: rows[0]?.countdown_time || null,
+  });
+});
+
+router.post('/couple/countdown', requireUser, async (req, res) => {
+  const title = (req.body?.title || '').trim();
+  const date = req.body?.date || null; // 'YYYY-MM-DD', or null/empty to clear
+  const time = date ? req.body?.time || null : null; // 'HH:MM', optional; cleared with the date
+  await query(
+    `UPDATE couple_state
+        SET countdown_title = $1, countdown_date = $2, countdown_time = $3,
+            updated_by = $4, updated_at = now()
+      WHERE id = 1`,
+    [title || null, date || null, time, req.user.id]
+  );
+  res.json({ ok: true });
+});
+
+/* ----------------------------------------------------------- thinking of you */
+
+router.post('/nudge', requireUser, async (req, res) => {
+  const partner = await partnerOf(req.user.id);
+  if (!partner) return res.status(500).json({ error: 'No partner profile found.' });
+  await query('INSERT INTO nudge (from_id, to_id) VALUES ($1, $2)', [req.user.id, partner.id]);
+  await logActivity(req.user.id, 'thinking_of_you', 'user', partner.id);
+  notify(partner.id, { title: `${req.user.display_name} is thinking of you`, body: '💛' });
+  res.status(201).json({ ok: true });
+});
+
+// The most recent unseen nudge (if any), and marks them seen.
+router.get('/nudges', requireUser, async (req, res) => {
+  const { rows } = await query(
+    `SELECT u.display_name AS from_name, n.created_at
+       FROM nudge n JOIN app_user u ON u.id = n.from_id
+      WHERE n.to_id = $1 AND n.seen = false
+      ORDER BY n.created_at DESC`,
+    [req.user.id]
+  );
+  if (rows.length) await query('UPDATE nudge SET seen = true WHERE to_id = $1 AND seen = false', [req.user.id]);
+  res.json({
+    latest: rows[0] ? { fromName: rows[0].from_name, at: rows[0].created_at, count: rows.length } : null,
+  });
+});
+
+/* -------------------------------------------------------------- shared lists */
+
+router.get('/lists', requireUser, async (_req, res) => {
+  const lists = await query(
+    'SELECT id, title, created_by, created_at FROM list WHERE is_removed = false ORDER BY created_at'
+  );
+  const items = await query(
+    `SELECT id, list_id, text, created_by, checked_by, checked_at
+       FROM list_item WHERE is_removed = false ORDER BY created_at`
+  );
+  res.json(
+    lists.rows.map((l) => ({
+      id: l.id,
+      title: l.title,
+      createdBy: l.created_by,
+      createdAt: l.created_at,
+      items: items.rows
+        .filter((i) => i.list_id === l.id)
+        .map((i) => ({
+          id: i.id,
+          text: i.text,
+          createdBy: i.created_by,
+          checkedBy: i.checked_by,
+          checkedAt: i.checked_at,
+        })),
+    }))
+  );
+});
+
+router.post('/lists', requireUser, async (req, res) => {
+  const title = (req.body?.title || '').trim();
+  if (!title) return res.status(400).json({ error: 'Name the list.' });
+  const { rows } = await query('INSERT INTO list (title, created_by) VALUES ($1, $2) RETURNING id', [
+    title,
+    req.user.id,
+  ]);
+  await logActivity(req.user.id, 'made_list', 'list', rows[0].id, { title });
+  res.status(201).json({ id: rows[0].id });
+});
+
+router.post('/lists/:id/items', requireUser, async (req, res) => {
+  const text = (req.body?.text || '').trim();
+  if (!text) return res.status(400).json({ error: 'Add some text.' });
+  const l = await query('SELECT id FROM list WHERE id = $1 AND is_removed = false', [req.params.id]);
+  if (!l.rows[0]) return res.status(404).json({ error: 'List not found.' });
+  const { rows } = await query(
+    'INSERT INTO list_item (list_id, text, created_by) VALUES ($1, $2, $3) RETURNING id',
+    [req.params.id, text, req.user.id]
+  );
+  res.status(201).json({ id: rows[0].id });
+});
+
+router.post('/list-items/:id/toggle', requireUser, async (req, res) => {
+  const { rows } = await query('SELECT checked_by FROM list_item WHERE id = $1 AND is_removed = false', [
+    req.params.id,
+  ]);
+  if (!rows[0]) return res.status(404).json({ error: 'Item not found.' });
+  if (rows[0].checked_by)
+    await query('UPDATE list_item SET checked_by = NULL, checked_at = NULL WHERE id = $1', [req.params.id]);
+  else
+    await query('UPDATE list_item SET checked_by = $1, checked_at = now() WHERE id = $2', [
+      req.user.id,
+      req.params.id,
+    ]);
+  res.json({ ok: true });
+});
+
+router.post('/lists/:id/remove', requireUser, async (req, res) => {
+  await query('UPDATE list SET is_removed = true WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+router.post('/list-items/:id/remove', requireUser, async (req, res) => {
+  await query('UPDATE list_item SET is_removed = true WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 });
 
