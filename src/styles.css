@@ -561,6 +561,13 @@ body::before {
   padding: 18px var(--pad);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain; /* don't chain scroll to the page behind */
+}
+
+/* While a sheet is open, freeze the page behind it (kills the second scrollbar). */
+html.scroll-locked,
+body.scroll-locked {
+  overflow: hidden;
 }
 
 .sheet__foot {
