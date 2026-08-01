@@ -28,16 +28,18 @@ export const api = {
   answer: (questionId, body) => request('POST', `/questions/${questionId}/response`, { body }),
   editAnswer: (id, body) => request('PATCH', `/responses/${id}`, { body }),
   revealAnswer: (id, body) => request('POST', `/questions/${id}/reveal`, { body }),
-  // answers: [{ itemId, choice: 'left' | 'right' }]
+  // answers: [{ itemId, choice: 'left' | 'right', note? }] — covers this_that, predict, wyr
   answerThisThat: (id, answers) => request('POST', `/questions/${id}/thisthat`, { answers }),
+  // guess: partner submits their guess via the reveal endpoint (revealAnswer); author judges here
+  judgeGuess: (id, verdict) => request('POST', `/questions/${id}/verdict`, { verdict }),
   toggleKeepsake: (id) => request('POST', `/questions/${id}/keepsake`),
   react: (targetKind, targetId, emoji) => request('POST', '/reactions', { targetKind, targetId, emoji }),
   markSeen: (kind, id) => request('POST', '/seen', { kind, id }),
   couple: () => request('GET', '/couple'),
   gamesUsed: () => request('GET', '/games/used'),
-  // fields: { kind, title, startsAt, allDay }
-  setCountdown: (fields) => request('POST', '/couple/countdown', fields),
-  clearCountdown: () => request('POST', '/couple/countdown', { clear: true }),
+  daily: () => request('GET', '/daily'),
+  dailyHistory: () => request('GET', '/daily/history'),
+  answerDaily: (body) => request('POST', '/daily', { body }),
   selectCountdown: (eventId) => request('POST', '/couple/countdown/select', { eventId }),
   thinkingOfYou: () => request('POST', '/nudge'),
   nudges: () => request('GET', '/nudges'),

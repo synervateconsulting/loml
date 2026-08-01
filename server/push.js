@@ -2,6 +2,7 @@
 // aren't configured, so the app runs fine without notifications set up.
 import webpush from 'web-push';
 import { query } from './db.js';
+import { appToday } from './daily.js';
 
 const PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
 const PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
@@ -37,7 +38,11 @@ async function waitingCount(userId) {
       WHERE recipient_id = $1 AND status = 'open' AND is_removed = false`,
     [userId]
   );
-  return rows[0]?.n ?? 0;
+  let n = rows[0]?.n ?? 0;
+  // An unanswered daily question also counts toward the app badge.
+  const daily = await query('SELECT 1 FROM daily_answer WHERE day = $1::date AND user_id = $2', [appToday(), userId]);
+  if (!daily.rows[0]) n += 1;
+  return n;
 }
 
 // Send a notification to every device a user has. Dead subscriptions are pruned.

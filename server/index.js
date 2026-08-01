@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import { migrate } from './db.js';
 import { attachUser } from './auth.js';
 import api from './routes.js';
+import { startDailyReminders } from './reminders.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.join(__dirname, '..', 'dist');
@@ -35,7 +36,10 @@ app.use((err, _req, res, _next) => {
 const port = process.env.PORT || 3000;
 
 migrate()
-  .then(() => app.listen(port, '0.0.0.0', () => console.log(`loml listening on ${port}`)))
+  .then(() => {
+    app.listen(port, '0.0.0.0', () => console.log(`loml listening on ${port}`));
+    startDailyReminders();
+  })
   .catch((err) => {
     console.error('Startup failed:', err);
     process.exit(1);

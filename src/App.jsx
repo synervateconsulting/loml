@@ -1,21 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './api.js';
-import { actionLabel, isReveal, isThisThat } from './shares.js';
+import { actionLabel, isReveal, isThisThat, isPickGame, isGuess } from './shares.js';
 import { pushSupported, permission, enablePush, syncBadge, clearDeliveredNotifications } from './push.js';
 import { eventIcon } from './calendar.js';
 import Login from './components/Login.jsx';
 import QuestionSection from './components/QuestionList.jsx';
 import ListsView from './components/ListsView.jsx';
 import GamesView from './components/GamesView.jsx';
-import CalendarView from './components/CalendarView.jsx';
+import CalendarView, { EventEditor } from './components/CalendarView.jsx';
 import Countdown from './components/Countdown.jsx';
-import {
-  ShareModal,
-  RespondModal,
-  EditQuestionModal,
-  ViewModal,
-  CountdownModal,
-} from './components/Modals.jsx';
+import { DailyCard, DailyModal } from './components/Daily.jsx';
+import { ShareModal, RespondModal, EditQuestionModal, ViewModal } from './components/Modals.jsx';
 
 const firstName = (name = '') => name.split(' ')[0];
 
@@ -34,6 +29,8 @@ export default function App() {
   const [couple, setCouple] = useState(null);
   const [calendar, setCalendar] = useState({ events: [], notifications: { needsAck: [], acknowledged: [] } });
   const [usedGames, setUsedGames] = useState([]);
+  const [knowingPoints, setKnowingPoints] = useState(0);
+  const [daily, setDaily] = useState(null);
   const [tab, setTab] = useState('theirs');
   const [view, setView] = useState('shares');
   const [modal, setModal] = useState(null);
@@ -48,16 +45,19 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      const [questions, coupleState, cal, used] = await Promise.all([
+      const [questions, coupleState, cal, used, dailyState] = await Promise.all([
         api.questions(),
         api.couple(),
         api.calendar(),
         api.gamesUsed(),
+        api.daily(),
       ]);
       setData(questions);
       setCouple(coupleState);
       setCalendar(cal);
       setUsedGames(used?.keys || []);
+      setKnowingPoints(used?.knowingPoints || 0);
+      setDaily(dailyState);
       setError('');
     } catch (err) {
       setError(err.message);
@@ -79,8 +79,9 @@ export default function App() {
 
   useEffect(() => {
     const waiting = data.received.filter((q) => q.status === 'open').length;
-    syncBadge(waiting + (calendar.notifications?.needsAck?.length || 0));
-  }, [data.received, calendar]);
+    const dailyPending = daily && !daily.iAnswered ? 1 : 0;
+    syncBadge(waiting + (calendar.notifications?.needsAck?.length || 0) + dailyPending);
+  }, [data.received, calendar, daily]);
 
   // Re-cover the spicy tab every time you leave it, so it always asks again.
   useEffect(() => {
@@ -140,6 +141,16 @@ export default function App() {
 
   const me = session.me;
   const partner = firstName(session.partner?.name || 'them');
+  // The countdown IS a calendar event; tapping the banner edits that event (or
+  // creates a new one and makes it the countdown).
+  const countdownEvent = couple?.countdown?.eventId
+    ? calendar.events.find((e) => e.id === couple.countdown.eventId) || null
+    : null;
+  const todayStr = (() => {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  })();
   const close = () => setModal(null);
   const finish = async () => {
     setModal(null);
@@ -179,9 +190,10 @@ export default function App() {
   // prompt (and your blind answer) while it's still waiting to be revealed.
   // This/That can't be edited once sent — the asker just views their locked
   // picks while waiting. Everything else opens the editor.
-  const mineOpenLabel = (q) => (isThisThat(q) ? 'View' : 'Edit');
+  const gameLike = (q) => isPickGame(q) || isGuess(q);
+  const mineOpenLabel = (q) => (gameLike(q) ? 'View' : 'Edit');
   const mineOpenAction = (q) =>
-    setModal(isThisThat(q) ? { kind: 'view', question: q } : { kind: 'edit', question: q });
+    setModal(gameLike(q) ? { kind: 'view', question: q } : { kind: 'edit', question: q });
 
   const signOut = async () => {
     await api.logout();
@@ -189,22 +201,30 @@ export default function App() {
     setData({ asked: [], received: [] });
     setCalendar({ events: [], notifications: { needsAck: [], acknowledged: [] } });
     setUsedGames([]);
+    setKnowingPoints(0);
+    setDaily(null);
     setView('shares');
   };
 
   const usePrompt = (prompt, usedKey) =>
     setModal({ kind: 'share', initialKind: 'reveal', initialTitle: prompt, usedKey: usedKey || null, lockKind: true });
 
-  // Start a This / That composer, optionally prefilled from a template.
-  const startThisThat = ({ title, items, usedKey }) =>
+  // Start a pick-game composer (this_that / predict / wyr), optionally prefilled.
+  const startPick = (initialKind, { title, items, usedKey } = {}) =>
     setModal({
       kind: 'share',
-      initialKind: 'this_that',
+      initialKind,
       initialTitle: title || '',
       initialItems: items || null,
       usedKey: usedKey || null,
       lockKind: true,
     });
+  const startThisThat = (opts) => startPick('this_that', opts);
+  const startPredict = (opts) => startPick('predict', opts);
+  const startWyr = (opts) => startPick('wyr', opts);
+  // Start a Guess My Answer composer (open prompt + your real answer).
+  const startGuess = ({ title, usedKey } = {}) =>
+    setModal({ kind: 'share', initialKind: 'guess', initialTitle: title || '', usedKey: usedKey || null, lockKind: true });
 
   // The Theirs/Mine board, reused for both the normal and spicy tabs.
   const renderBoard = (received, asked) => {
@@ -321,9 +341,11 @@ export default function App() {
             </button>
           </div>
         </div>
+        <DailyCard daily={daily} onOpen={() => setModal({ kind: 'daily' })} />
         <div className="countdownrow">
           {couple?.countdown ? (
             <Countdown
+              compact
               title={couple.countdown.title}
               startsAt={couple.countdown.startsAt}
               allDay={couple.countdown.allDay}
@@ -331,7 +353,7 @@ export default function App() {
               onClick={() => setModal({ kind: 'countdown' })}
             />
           ) : (
-            <Countdown empty onClick={() => setModal({ kind: 'countdown' })} />
+            <Countdown compact empty onClick={() => setModal({ kind: 'countdown' })} />
           )}
           <button
             type="button"
@@ -341,34 +363,37 @@ export default function App() {
             aria-pressed={view === 'calendar'}
           >
             📅
-            {calendar.notifications?.needsAck?.length > 0 && <span className="dot" aria-label="calendar updates" />}
+            {calendar.notifications?.needsAck?.length > 0 && <span className="caldot" aria-label="calendar updates" />}
           </button>
         </div>
-        <button
-          type="button"
-          className="btn btn--primary btn--wide"
-          onClick={() => setModal({ kind: 'share', initialSpicy: view === 'spicy' })}
-        >
-          {view === 'spicy' ? 'Share something spicy' : 'Share something'}
-        </button>
-        <nav className="topnav" role="tablist">
-          {NAV.map(([key, label]) => {
-            const dot = (key === 'shares' && waitingClean > 0) || (key === 'spicy' && waitingSpicy > 0);
-            return (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                aria-selected={view === key}
-                className={`topnav__item ${view === key ? 'is-active' : ''}`}
-                onClick={() => setView(key)}
-              >
-                {label}
-                {dot && <span className="dot" aria-label="waiting on you" />}
-              </button>
-            );
-          })}
-        </nav>
+        <div className="actionbar">
+          <nav className="navgrid" role="tablist">
+            {NAV.map(([key, label]) => {
+              const dot = (key === 'shares' && waitingClean > 0) || (key === 'spicy' && waitingSpicy > 0);
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === key}
+                  className={`topnav__item ${view === key ? 'is-active' : ''}`}
+                  onClick={() => setView(key)}
+                >
+                  {label}
+                  {dot && <span className="dot" aria-label="waiting on you" />}
+                </button>
+              );
+            })}
+          </nav>
+          <button
+            type="button"
+            className="sharebtn"
+            onClick={() => setModal({ kind: 'share', initialSpicy: view === 'spicy' })}
+          >
+            <span className="sharebtn__plus" aria-hidden="true">＋</span>
+            {view === 'spicy' ? 'Spicy' : 'Share'}
+          </button>
+        </div>
       </header>
 
       <main className="board">
@@ -457,7 +482,15 @@ export default function App() {
         {view === 'lists' && <ListsView />}
 
         {view === 'games' && (
-          <GamesView onUsePrompt={usePrompt} onStartThisThat={startThisThat} usedGames={usedGames} />
+          <GamesView
+            onUsePrompt={usePrompt}
+            onStartThisThat={startThisThat}
+            onStartPredict={startPredict}
+            onStartWyr={startWyr}
+            onStartGuess={startGuess}
+            usedGames={usedGames}
+            knowingPoints={knowingPoints}
+          />
         )}
       </main>
 
@@ -490,8 +523,19 @@ export default function App() {
         />
       )}
       {modal?.kind === 'countdown' && (
-        <CountdownModal countdown={couple?.countdown} onClose={close} onDone={finish} />
+        <EventEditor
+          event={countdownEvent}
+          defaultDate={todayStr}
+          partner={partner}
+          isCountdown={Boolean(countdownEvent)}
+          asCountdown={!countdownEvent}
+          onClose={close}
+          onSaved={finish}
+          onRemoved={finish}
+          onChanged={load}
+        />
       )}
+      {modal?.kind === 'daily' && <DailyModal daily={daily} onClose={close} onAnswered={finish} />}
     </div>
   );
 }

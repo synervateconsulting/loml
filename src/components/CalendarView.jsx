@@ -29,7 +29,7 @@ const prettyDay = (dayKey) => {
 
 /* ------------------------------------------------------------- event editor */
 
-function EventEditor({ event, defaultDate, partner, isCountdown, onClose, onSaved, onRemoved, onChanged }) {
+export function EventEditor({ event, defaultDate, partner, isCountdown, asCountdown, onClose, onSaved, onRemoved, onChanged }) {
   const isNew = !event;
   const [kind, setKind] = useState(event?.kind || 'date_night');
   const [title, setTitle] = useState(event?.title || '');
@@ -56,8 +56,13 @@ function EventEditor({ event, defaultDate, partner, isCountdown, onClose, onSave
         location: location.trim(),
         description: description.trim(),
       };
-      if (isNew) await api.createEvent(fields);
-      else await api.editEvent(event.id, fields);
+      if (isNew) {
+        const { id } = await api.createEvent(fields);
+        // Creating the countdown from the banner: make the new event the countdown.
+        if (asCountdown && id) await api.selectCountdown(id);
+      } else {
+        await api.editEvent(event.id, fields);
+      }
       await onSaved();
     } catch (e) {
       setError(e.message);

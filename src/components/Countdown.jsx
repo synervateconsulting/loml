@@ -45,7 +45,21 @@ const liveRemaining = (ms) => {
   return `${secs}s`;
 };
 
-export default function Countdown({ empty, emptyLabel = '+ Set a countdown', title, startsAt, allDay, icon, tag, onClick }) {
+// Small golden value beneath the compact title: the live to-the-second count
+// when a time is set, otherwise a day count.
+const compactValue = (target, time, now) => {
+  if (time) {
+    const ms = target.getTime() - now;
+    return ms > 0 ? liveRemaining(ms) : '♥ the moment is here';
+  }
+  const days = daysBetween(target);
+  if (days > 1) return `${days} days to go`;
+  if (days === 1) return 'tomorrow';
+  if (days === 0) return 'today';
+  return `${Math.abs(days)} days ago`;
+};
+
+export default function Countdown({ empty, emptyLabel = '+ Set a countdown', title, startsAt, allDay, icon, tag, compact, onClick }) {
   const date = empty ? null : (startsAt || '').slice(0, 10);
   const time = !empty && !allDay ? (startsAt || '').slice(11, 16) : null;
 
@@ -58,7 +72,7 @@ export default function Countdown({ empty, emptyLabel = '+ Set a countdown', tit
 
   if (empty || !date) {
     return (
-      <button type="button" className="countdown countdown--empty" onClick={onClick}>
+      <button type="button" className={`countdown countdown--empty ${compact ? 'countdown--compact' : ''}`} onClick={onClick}>
         {emptyLabel}
       </button>
     );
@@ -66,6 +80,20 @@ export default function Countdown({ empty, emptyLabel = '+ Set a countdown', tit
 
   const target = toLocal(date, time);
   const when = formatWhen(target, Boolean(time));
+
+  // Compact: one slim line — title on the left, live/day count on the right.
+  if (compact) {
+    return (
+      <button type="button" className="countdown countdown--compact" onClick={onClick}>
+        <span className="countdown__ctitle">
+          {icon ? `${icon} ` : '⏳ '}
+          {title || 'Countdown'}
+          {tag && <span className="countdown__tag">{tag}</span>}
+        </span>
+        <span className={`countdown__cval ${time ? 'countdown__cval--live' : ''}`}>{compactValue(target, time, now)}</span>
+      </button>
+    );
+  }
 
   let num;
   let sub;
