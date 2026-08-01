@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import DecksView from './DecksView.jsx';
-import { THISTHAT_TEMPLATES, WYR_TEMPLATES, GUESS_PROMPTS } from '../thisthat.js';
+import { THISTHAT_TEMPLATES, PREDICT_TEMPLATES, WYR_TEMPLATES, GUESS_PROMPTS } from '../thisthat.js';
 import { templateToItems } from './ThisThat.jsx';
 
 // "Games" groups the playful, low-stakes ways to start a share, nesting its own
@@ -129,7 +129,7 @@ export default function GamesView({
           <p className="games__sub">🔮 Predict My Pick</p>
           <p className="decks__hint">Lock in your real picks — they guess how well they know you.</p>
           <div className="ttsets">
-            {THISTHAT_TEMPLATES.map((t) => (
+            {PREDICT_TEMPLATES.map((t) => (
               <button
                 key={t.id}
                 type="button"
