@@ -340,6 +340,7 @@ export default function App() {
         <div className="countdownrow">
           {couple?.countdown ? (
             <Countdown
+              compact
               title={couple.countdown.title}
               startsAt={couple.countdown.startsAt}
               allDay={couple.countdown.allDay}
@@ -347,7 +348,7 @@ export default function App() {
               onClick={() => setModal({ kind: 'countdown' })}
             />
           ) : (
-            <Countdown empty onClick={() => setModal({ kind: 'countdown' })} />
+            <Countdown compact empty onClick={() => setModal({ kind: 'countdown' })} />
           )}
           <button
             type="button"
@@ -357,34 +358,37 @@ export default function App() {
             aria-pressed={view === 'calendar'}
           >
             📅
-            {calendar.notifications?.needsAck?.length > 0 && <span className="dot" aria-label="calendar updates" />}
+            {calendar.notifications?.needsAck?.length > 0 && <span className="caldot" aria-label="calendar updates" />}
           </button>
         </div>
-        <button
-          type="button"
-          className="btn btn--primary btn--wide"
-          onClick={() => setModal({ kind: 'share', initialSpicy: view === 'spicy' })}
-        >
-          {view === 'spicy' ? 'Share something spicy' : 'Share something'}
-        </button>
-        <nav className="topnav" role="tablist">
-          {NAV.map(([key, label]) => {
-            const dot = (key === 'shares' && waitingClean > 0) || (key === 'spicy' && waitingSpicy > 0);
-            return (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                aria-selected={view === key}
-                className={`topnav__item ${view === key ? 'is-active' : ''}`}
-                onClick={() => setView(key)}
-              >
-                {label}
-                {dot && <span className="dot" aria-label="waiting on you" />}
-              </button>
-            );
-          })}
-        </nav>
+        <div className="actionbar">
+          <nav className="navgrid" role="tablist">
+            {NAV.map(([key, label]) => {
+              const dot = (key === 'shares' && waitingClean > 0) || (key === 'spicy' && waitingSpicy > 0);
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === key}
+                  className={`topnav__item ${view === key ? 'is-active' : ''}`}
+                  onClick={() => setView(key)}
+                >
+                  {label}
+                  {dot && <span className="dot" aria-label="waiting on you" />}
+                </button>
+              );
+            })}
+          </nav>
+          <button
+            type="button"
+            className="sharebtn"
+            onClick={() => setModal({ kind: 'share', initialSpicy: view === 'spicy' })}
+          >
+            <span className="sharebtn__plus" aria-hidden="true">＋</span>
+            {view === 'spicy' ? 'Spicy' : 'Share'}
+          </button>
+        </div>
       </header>
 
       <main className="board">

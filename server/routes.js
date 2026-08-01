@@ -1098,6 +1098,51 @@ router.get('/daily', requireUser, async (req, res) => {
   });
 });
 
+// The archive: every day from today back to your first answer (capped), most
+// recent first, with each person's answer state.
+router.get('/daily/history', requireUser, async (req, res) => {
+  const partner = await partnerOf(req.user.id);
+  const { rows: t } = await query("SELECT to_char(CURRENT_DATE, 'YYYY-MM-DD') AS today");
+  const today = t[0].today;
+  const { rows } = await query(
+    "SELECT to_char(day, 'YYYY-MM-DD') AS day, user_id, body FROM daily_answer WHERE day > CURRENT_DATE - INTERVAL '75 days' ORDER BY day"
+  );
+  const byDay = new Map();
+  for (const r of rows) {
+    if (!byDay.has(r.day)) byDay.set(r.day, {});
+    byDay.get(r.day)[r.user_id] = r.body;
+  }
+  const answeredDays = [...byDay.keys()].sort();
+  const earliest = answeredDays[0] || today;
+
+  const days = [];
+  const cur = new Date(`${today}T00:00:00`);
+  const stop = new Date(`${earliest}T00:00:00`);
+  const floor = new Date(cur);
+  floor.setDate(floor.getDate() - 60); // hard cap on how far back we list
+  const start = stop < floor ? floor : stop;
+  while (cur >= start) {
+    const day = fmtDay(cur);
+    const m = byDay.get(day) || {};
+    const mine = m[req.user.id];
+    const theirs = partner ? m[partner.id] : undefined;
+    const iAnswered = mine !== undefined;
+    const partnerAnswered = theirs !== undefined;
+    // Blind only guards TODAY; past days are shown in full.
+    const showTheirs = day !== today || (iAnswered && partnerAnswered);
+    days.push({
+      day,
+      prompt: promptForDay(day),
+      iAnswered,
+      partnerAnswered,
+      mine: mine ?? null,
+      theirs: showTheirs ? theirs ?? null : null,
+    });
+    cur.setDate(cur.getDate() - 1);
+  }
+  res.json({ today, partnerName: partner?.display_name || 'them', days });
+});
+
 router.post('/daily', requireUser, async (req, res) => {
   const body = (req.body?.body || '').trim();
   if (!body) return res.status(400).json({ error: 'Write your answer.' });

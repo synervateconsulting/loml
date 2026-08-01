@@ -1,24 +1,85 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { Modal } from './Modals.jsx';
 
-// The daily question, shown as a card near the top of the home screen.
-export function DailyCard({ daily, onOpen }) {
-  if (!daily) return null;
-  const { prompt, iAnswered, revealed, streak } = daily;
-  const state = revealed ? 'revealed' : iAnswered ? 'waiting' : 'open';
-  const tag = revealed ? 'Today · revealed' : iAnswered ? 'Today · answered' : 'Today’s question';
+const dayLabel = (day, today) => {
+  const [y, m, d] = day.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  const [ty, tm, td] = today.split('-').map(Number);
+  const diff = Math.round((new Date(ty, tm - 1, td) - dt) / 86400000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Yesterday';
+  return dt.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+};
+
+// The "Today's ?" archive tab under Games: every day back to your first answer,
+// most recent first. Tap a row to see the answers / who answered.
+export function DailyHistory() {
+  const [data, setData] = useState(null);
+  const [open, setOpen] = useState(null);
+  useEffect(() => {
+    api.dailyHistory().then(setData).catch(() => setData({ days: [], partnerName: 'them' }));
+  }, []);
+
+  if (!data) return <p className="empty">Loading…</p>;
+  const { days, partnerName, today } = data;
+  if (!days.length) return <p className="empty">No daily questions yet — answer today’s to get started.</p>;
 
   return (
-    <button type="button" className={`daily daily--${state}`} onClick={onOpen}>
-      <span className="daily__row">
-        <span className="daily__tag">🗓️ {tag}</span>
-        {streak > 0 && <span className="daily__streak">🔥 {streak}</span>}
-      </span>
-      <span className="daily__prompt">{prompt}</span>
-      <span className="daily__cta">
-        {revealed ? 'See both answers' : iAnswered ? `Waiting on ${daily.partnerName}` : 'Tap to answer'}
-      </span>
+    <div className="dailytab">
+      {days.map((d) => {
+        const state = d.iAnswered && d.partnerAnswered ? 'both' : d.iAnswered ? 'you' : d.partnerAnswered ? 'them' : 'none';
+        const chip = { both: 'Both', you: 'You only', them: `${partnerName} only`, none: 'Missed' }[state];
+        const isOpen = open === d.day;
+        return (
+          <div key={d.day} className={`dhrow ${isOpen ? 'is-open' : ''}`}>
+            <button type="button" className="dhrow__head" onClick={() => setOpen(isOpen ? null : d.day)}>
+              <span className="dhrow__top">
+                <span className="dhrow__date">{dayLabel(d.day, today)}</span>
+                <span className={`dhchip dhchip--${state}`}>{chip}</span>
+              </span>
+              <span className="dhrow__q">{d.prompt}</span>
+            </button>
+            {isOpen && (
+              <div className="dhrow__body">
+                {state === 'none' && <p className="hint">Neither of you answered this one.</p>}
+                {d.mine != null && <p className="dhans"><b>You:</b> {d.mine}</p>}
+                {d.theirs != null && <p className="dhans"><b>{partnerName}:</b> {d.theirs}</p>}
+                {state === 'you' && <p className="hint">{partnerName} didn’t answer.</p>}
+                {state === 'them' && d.theirs == null && (
+                  <p className="hint">Answer today’s question to reveal {partnerName}’s.</p>
+                )}
+                {state === 'them' && <p className="hint">You didn’t answer that day.</p>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// The daily question as a slim status pill near the top of the home screen.
+// Collapsed shows just the state (a colored dot + a word); tap opens the full
+// prompt / answers.
+export function DailyCard({ daily, onOpen }) {
+  if (!daily) return null;
+  const { iAnswered, revealed, streak, partnerName } = daily;
+  const dot = revealed ? 'done' : iAnswered ? 'wait' : 'new';
+  const label = revealed ? 'Today’s answers' : iAnswered ? 'Answered' : 'Today’s question';
+  const right = revealed
+    ? streak > 0
+      ? `🔥 ${streak}`
+      : 'tap to see'
+    : iAnswered
+      ? `waiting on ${partnerName}`
+      : 'tap to answer';
+
+  return (
+    <button type="button" className="daily" onClick={onOpen}>
+      <span className={`daily__dot daily__dot--${dot}`} aria-hidden="true" />
+      <span className="daily__t">{label}</span>
+      <span className={`daily__r ${revealed && streak > 0 ? 'daily__r--streak' : ''}`}>{right}</span>
     </button>
   );
 }

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import DecksView from './DecksView.jsx';
 import { THISTHAT_TEMPLATES, PREDICT_TEMPLATES, WYR_TEMPLATES, GUESS_PROMPTS } from '../thisthat.js';
 import { templateToItems } from './ThisThat.jsx';
+import { DailyHistory } from './Daily.jsx';
 
 // "Games" groups the playful, low-stakes ways to start a share, nesting its own
 // sub-tabs (Decks, This / That, Would You Rather, Guessing) beneath the top nav.
@@ -22,6 +23,7 @@ export default function GamesView({
     ['thisthat', 'This / That'],
     ['wyr', 'Would You Rather'],
     ['guessing', 'Guessing'],
+    ['today', 'Today’s ?'],
   ];
 
   return (
@@ -192,6 +194,8 @@ export default function GamesView({
           </button>
         </div>
       )}
+
+      {pane === 'today' && <DailyHistory />}
     </div>
   );
 }

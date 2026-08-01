@@ -38,6 +38,7 @@ export const api = {
   couple: () => request('GET', '/couple'),
   gamesUsed: () => request('GET', '/games/used'),
   daily: () => request('GET', '/daily'),
+  dailyHistory: () => request('GET', '/daily/history'),
   answerDaily: (body) => request('POST', '/daily', { body }),
   // fields: { kind, title, startsAt, allDay }
   setCountdown: (fields) => request('POST', '/couple/countdown', fields),
