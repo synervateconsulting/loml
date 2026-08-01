@@ -578,11 +578,9 @@ body::before {
   overscroll-behavior: contain; /* don't chain scroll to the page behind */
 }
 
-/* While a sheet is open, freeze the page behind it (kills the second scrollbar). */
-html.scroll-locked,
-body.scroll-locked {
-  overflow: hidden;
-}
+/* Page freeze while a sheet is open is handled in JS (position:fixed on body,
+   see useScrollLock in Modals.jsx). We deliberately avoid overflow:hidden here:
+   on iOS Safari it clips position:fixed modals to <body>'s height. */
 
 .sheet__foot {
   display: flex;
