@@ -334,10 +334,13 @@ router.post('/questions', requireUser, async (req, res) => {
   }
 });
 
-// Only the asker can edit, and only while it is still unanswered.
+// Only the asker can edit, and only while it is still unanswered/unacknowledged.
 router.patch('/questions/:id', requireUser, async (req, res) => {
   const title = (req.body?.title || '').trim();
   const detail = (req.body?.detail || '').trim();
+  const link = (req.body?.link || '').trim();
+  const hasAnswer = typeof req.body?.answer === 'string'; // reveal: edit your blind answer
+  const answer = (req.body?.answer || '').trim();
   if (!title) return res.status(400).json({ error: 'Give it a title.' });
 
   const { rows } = await query('SELECT * FROM question WHERE id = $1 AND is_removed = false', [
@@ -348,20 +351,29 @@ router.patch('/questions/:id', requireUser, async (req, res) => {
   if (q.asker_id !== req.user.id) return res.status(403).json({ error: 'This is not yours.' });
   if (q.status === 'answered')
     return res.status(409).json({ error: "This one's already resolved, so it's locked." });
+  if (q.kind === 'song' && !/^https?:\/\//i.test(link))
+    return res.status(400).json({ error: 'Paste a link to the song.' });
 
   const nextVersion = q.version + 1;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query(
-      `UPDATE question SET title = $1, detail = $2, version = $3, updated_at = now() WHERE id = $4`,
-      [title, detail, nextVersion, q.id]
+      `UPDATE question SET title = $1, detail = $2, link = $3, version = $4, updated_at = now() WHERE id = $5`,
+      [title, detail, q.kind === 'song' ? link : q.link, nextVersion, q.id]
     );
     await client.query(
       `INSERT INTO question_version (question_id, version, title, detail, edited_by)
        VALUES ($1, $2, $3, $4, $5)`,
       [q.id, nextVersion, title, detail, req.user.id]
     );
+    // A reveal's blind answer can still be changed while it's unrevealed.
+    if (q.kind === 'reveal' && hasAnswer) {
+      await client.query(
+        `UPDATE reveal_answer SET body = $1 WHERE question_id = $2 AND user_id = $3`,
+        [answer, q.id, req.user.id]
+      );
+    }
     await client.query('COMMIT');
     await logActivity(req.user.id, 'edited_question', 'question', q.id, { version: nextVersion });
     res.json({ ok: true, version: nextVersion });

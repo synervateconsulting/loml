@@ -409,16 +409,25 @@ export function RespondModal({ question, meId, onClose, onDone }) {
 /* --------------------------------------------- edit a share you have sent */
 
 export function EditQuestionModal({ question, onClose, onDone }) {
+  const noun = kindOf(question);
+  const reveal = isReveal(question);
+  const song = isSong(question);
   const [title, setTitle] = useState(question.title);
   const [detail, setDetail] = useState(question.detail);
+  const [link, setLink] = useState(question.link || '');
+  const [answer, setAnswer] = useState(question.reveal?.myBody || ''); // reveal: your blind answer
   const [staged, setStaged] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [ask, confirmNode] = useConfirm();
   const savedText = useRef(false);
 
-  const noun = kindOf(question);
-  const textDirty = title !== question.title || detail !== question.detail;
+  const linkOk = !song || /^https?:\/\//i.test(link.trim());
+  const textDirty =
+    title !== question.title ||
+    detail !== question.detail ||
+    (song && link.trim() !== (question.link || '')) ||
+    (reveal && answer !== (question.reveal?.myBody || ''));
   const dirty = textDirty || staged.length > 0;
   const cancel = () => (dirty ? ask(discardSteps('edit'), onClose) : onClose());
 
@@ -428,10 +437,13 @@ export function EditQuestionModal({ question, onClose, onDone }) {
       setError('');
       try {
         if (textDirty && !savedText.current) {
-          await api.editQuestion(question.id, title, detail);
+          await api.editQuestion(question.id, title, detail, {
+            ...(song ? { link: link.trim() } : {}),
+            ...(reveal ? { answer } : {}),
+          });
           savedText.current = true;
         }
-        await uploadStaged({ staged, setStaged, ownerKind: 'question', questionId: question.id });
+        if (!reveal) await uploadStaged({ staged, setStaged, ownerKind: 'question', questionId: question.id });
         onDone();
       } catch (err) {
         setError(err.message);
@@ -453,13 +465,18 @@ export function EditQuestionModal({ question, onClose, onDone }) {
     <>
       <Modal
         eyebrow={`Waiting on ${question.recipientName}`}
-        title={`Edit your ${noun}`}
+        title={reveal ? 'Edit your prompt' : `Edit your ${noun}`}
         footer={
           <>
             <button type="button" className="btn btn--ghost" onClick={cancel}>
               Cancel
             </button>
-            <button type="button" className="btn btn--primary" onClick={save} disabled={!dirty || !title.trim() || busy}>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={save}
+              disabled={!dirty || !title.trim() || !linkOk || busy}
+            >
               Save changes
             </button>
           </>
@@ -470,8 +487,22 @@ export function EditQuestionModal({ question, onClose, onDone }) {
           <span className="field__label">{COMPOSE[noun].label}</span>
           <input className="field__input" value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} />
         </label>
+
+        {song && (
+          <label className="field">
+            <span className="field__label">Link</span>
+            <input
+              className="field__input"
+              value={link}
+              inputMode="url"
+              placeholder="https://…"
+              onChange={(e) => setLink(e.target.value)}
+            />
+          </label>
+        )}
+
         <label className="field">
-          <span className="field__label">More about it</span>
+          <span className="field__label">{song ? 'Why this one' : 'More about it'}</span>
           <textarea
             className="field__input field__input--area"
             rows={6}
@@ -479,12 +510,27 @@ export function EditQuestionModal({ question, onClose, onDone }) {
             onChange={(e) => setDetail(e.target.value)}
           />
         </label>
-        {isSong(question) && <SongLink link={question.link} />}
-        <Attachments items={question.attachments} onRemove={removeAttachment} />
-        <div className="field">
-          <span className="field__label">Add voice, video or a file</span>
-          <MediaCapture items={staged} onChange={setStaged} disabled={busy} />
-        </div>
+
+        {reveal ? (
+          <label className="field">
+            <span className="field__label">Your answer (still hidden until they reply)</span>
+            <textarea
+              className="field__input field__input--area"
+              rows={5}
+              value={answer}
+              onChange={(e) => setAnswer(e.target.value)}
+            />
+          </label>
+        ) : (
+          <>
+            <Attachments items={question.attachments} onRemove={removeAttachment} />
+            <div className="field">
+              <span className="field__label">Add voice, video or a file</span>
+              <MediaCapture items={staged} onChange={setStaged} disabled={busy} />
+            </div>
+          </>
+        )}
+
         {question.version > 1 && <p className="hint">Edited {question.version - 1}×. Every version is kept.</p>}
         {error && <p className="notice notice--error">{error}</p>}
       </Modal>

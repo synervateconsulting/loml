@@ -22,7 +22,8 @@ export const api = {
   questions: () => request('GET', '/questions'),
   // fields: { title, detail, kind, link?, answer? }
   ask: (fields) => request('POST', '/questions', fields),
-  editQuestion: (id, title, detail) => request('PATCH', `/questions/${id}`, { title, detail }),
+  editQuestion: (id, title, detail, extra = {}) =>
+    request('PATCH', `/questions/${id}`, { title, detail, ...extra }),
   removeQuestion: (id) => request('POST', `/questions/${id}/remove`),
   answer: (questionId, body) => request('POST', `/questions/${questionId}/response`, { body }),
   editAnswer: (id, body) => request('PATCH', `/responses/${id}`, { body }),
