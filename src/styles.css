@@ -1358,9 +1358,13 @@ body::before {
   color: #9ad0c2;
   border-color: rgba(154, 208, 194, 0.4);
 }
+.kindtag--note {
+  color: #8fb0d6;
+  border-color: rgba(143, 176, 214, 0.4);
+}
 .kindtag--reveal {
-  color: var(--rose);
-  border-color: rgba(232, 135, 155, 0.4);
+  color: #c9a2ea;
+  border-color: rgba(201, 162, 234, 0.4);
 }
 
 /* card extras -------------------------------------------------------------- */
