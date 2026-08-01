@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import DecksView from './DecksView.jsx';
-import { THISTHAT_TEMPLATES, GUESS_PROMPTS } from '../thisthat.js';
+import { THISTHAT_TEMPLATES, WYR_TEMPLATES, GUESS_PROMPTS } from '../thisthat.js';
 import { templateToItems } from './ThisThat.jsx';
 
 // "Games" groups the playful, low-stakes ways to start a share, nesting its own
@@ -9,6 +9,7 @@ export default function GamesView({
   onUsePrompt,
   onStartThisThat,
   onStartPredict,
+  onStartWyr,
   onStartGuess,
   usedGames = [],
   knowingPoints = 0,
@@ -19,6 +20,7 @@ export default function GamesView({
   const tabs = [
     ['decks', 'Decks'],
     ['thisthat', 'This / That'],
+    ['wyr', 'Would You Rather'],
     ['guessing', 'Guessing'],
   ];
 
@@ -78,6 +80,44 @@ export default function GamesView({
             <span className="ttset__text">
               <span className="ttset__name">Build your own</span>
               <span className="ttset__blurb">Start from scratch — at least 3 this-or-thats.</span>
+            </span>
+          </button>
+        </div>
+      )}
+
+      {pane === 'wyr' && (
+        <div className="thisthat">
+          <p className="decks__hint">
+            Impossible choices — you both pick blind (add a “why” if you like), then see where you land.
+          </p>
+          <div className="ttsets">
+            {WYR_TEMPLATES.map((t) => {
+              const played = used.has(`wyr:${t.id}`);
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`ttset ${played ? 'is-played' : ''}`}
+                  onClick={() => onStartWyr?.({ title: t.name, items: templateToItems(t), usedKey: `wyr:${t.id}` })}
+                >
+                  <span className="ttset__icon" aria-hidden="true">{t.icon}</span>
+                  <span className="ttset__text">
+                    <span className="ttset__name">
+                      {t.name}
+                      {played && <span className="playedtag">Played</span>}
+                    </span>
+                    <span className="ttset__blurb">{t.blurb}</span>
+                  </span>
+                  <span className="ttset__count">{t.items.length}</span>
+                </button>
+              );
+            })}
+          </div>
+          <button type="button" className="ttset ttset--build" onClick={() => onStartWyr?.({ title: '', items: null })}>
+            <span className="ttset__icon" aria-hidden="true">＋</span>
+            <span className="ttset__text">
+              <span className="ttset__name">Build your own</span>
+              <span className="ttset__blurb">Your own dilemmas — at least 3.</span>
             </span>
           </button>
         </div>

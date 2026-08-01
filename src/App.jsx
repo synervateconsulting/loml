@@ -211,6 +211,7 @@ export default function App() {
     });
   const startThisThat = (opts) => startPick('this_that', opts);
   const startPredict = (opts) => startPick('predict', opts);
+  const startWyr = (opts) => startPick('wyr', opts);
   // Start a Guess My Answer composer (open prompt + your real answer).
   const startGuess = ({ title, usedKey } = {}) =>
     setModal({ kind: 'share', initialKind: 'guess', initialTitle: title || '', usedKey: usedKey || null, lockKind: true });
@@ -470,6 +471,7 @@ export default function App() {
             onUsePrompt={usePrompt}
             onStartThisThat={startThisThat}
             onStartPredict={startPredict}
+            onStartWyr={startWyr}
             onStartGuess={startGuess}
             usedGames={usedGames}
             knowingPoints={knowingPoints}

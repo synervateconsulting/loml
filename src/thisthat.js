@@ -3,6 +3,51 @@
 // at least MIN_ITEMS; templates carry 5–10.
 export const MIN_ITEMS = 3;
 
+// "Would You Rather" dilemma sets. Same grid as This/That, but framed as
+// impossible choices; each player can add a "why" per pick.
+export const WYR_TEMPLATES = [
+  {
+    id: 'impossible',
+    name: 'Impossible choices',
+    icon: '⚖️',
+    blurb: 'No good options here.',
+    items: [
+      { left: 'No phone', leftIcon: '📵', right: 'No coffee', rightIcon: '☕' },
+      { left: 'Always cold', leftIcon: '🥶', right: 'Always hot', rightIcon: '🥵' },
+      { left: 'Read minds', leftIcon: '🧠', right: 'Be invisible', rightIcon: '👻' },
+      { left: 'Never music', leftIcon: '🔇', right: 'Never movies', rightIcon: '🎬' },
+      { left: 'Rewind time', leftIcon: '⏪', right: 'Pause time', rightIcon: '⏸️' },
+      { left: 'Only summer', leftIcon: '☀️', right: 'Only winter', rightIcon: '❄️' },
+    ],
+  },
+  {
+    id: 'silly',
+    name: 'Silly stakes',
+    icon: '🤪',
+    blurb: 'Low stakes, big debates.',
+    items: [
+      { left: 'Talk to animals', leftIcon: '🐾', right: 'Speak every language', rightIcon: '🗣️' },
+      { left: 'Fingers as forks', leftIcon: '🍴', right: 'Toes as forks', rightIcon: '🦶' },
+      { left: 'Sing everything', leftIcon: '🎤', right: 'Narrate everything', rightIcon: '📢' },
+      { left: 'Tiny hands', leftIcon: '🤏', right: 'Huge feet', rightIcon: '🦶' },
+      { left: 'Always sparkle', leftIcon: '✨', right: 'Always glow', rightIcon: '🔦' },
+    ],
+  },
+  {
+    id: 'us',
+    name: 'For the two of us',
+    icon: '💞',
+    blurb: 'Choices about our life together.',
+    items: [
+      { left: 'Cabin in the woods', leftIcon: '🌲', right: 'Loft in the city', rightIcon: '🏙️' },
+      { left: 'Big wedding', leftIcon: '🎉', right: 'Elope', rightIcon: '🏃' },
+      { left: 'Adopt 3 dogs', leftIcon: '🐶', right: 'Adopt 3 cats', rightIcon: '🐱' },
+      { left: 'Travel forever', leftIcon: '✈️', right: 'Perfect home base', rightIcon: '🏡' },
+      { left: 'Breakfast in bed', leftIcon: '🥐', right: 'Midnight snacks', rightIcon: '🌙' },
+    ],
+  },
+];
+
 // Prompts for "Guess My Answer": you answer privately, partner guesses.
 export const GUESS_PROMPTS = [
   { id: 'comfort-food', text: 'What’s my ultimate comfort food?' },
