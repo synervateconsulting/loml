@@ -80,7 +80,27 @@ async function uploadStaged({ staged, setStaged, ownerKind, questionId, response
   }
 }
 
+// Lock the page behind an open sheet so you don't get its scrollbar on top of
+// the sheet's own. Reference-counted so a stacked Confirm doesn't unlock early.
+let scrollLockCount = 0;
+function setLocked(on) {
+  // The page scroller is <html> in some browsers and <body> in others — lock both.
+  document.documentElement.classList.toggle('scroll-locked', on);
+  document.body.classList.toggle('scroll-locked', on);
+}
+function useScrollLock() {
+  useEffect(() => {
+    if (scrollLockCount === 0) setLocked(true);
+    scrollLockCount += 1;
+    return () => {
+      scrollLockCount = Math.max(0, scrollLockCount - 1);
+      if (scrollLockCount === 0) setLocked(false);
+    };
+  }, []);
+}
+
 function Modal({ title, eyebrow, children, footer, onScrimClick }) {
+  useScrollLock();
   return (
     <div className="scrim" role="dialog" aria-modal="true" onMouseDown={onScrimClick}>
       <div className="sheet" onMouseDown={(e) => e.stopPropagation()}>
