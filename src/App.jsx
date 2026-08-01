@@ -6,7 +6,7 @@ import { eventIcon } from './calendar.js';
 import Login from './components/Login.jsx';
 import QuestionSection from './components/QuestionList.jsx';
 import ListsView from './components/ListsView.jsx';
-import DecksView from './components/DecksView.jsx';
+import GamesView from './components/GamesView.jsx';
 import CalendarView from './components/CalendarView.jsx';
 import Countdown from './components/Countdown.jsx';
 import {
@@ -23,7 +23,7 @@ const NAV = [
   ['shares', 'Shares'],
   ['keepsakes', 'Keepsakes'],
   ['lists', 'Lists'],
-  ['decks', 'Decks'],
+  ['games', 'Games'],
   ['spicy', '🔥😈🔥'],
 ];
 
@@ -438,7 +438,7 @@ export default function App() {
 
         {view === 'lists' && <ListsView />}
 
-        {view === 'decks' && <DecksView onUsePrompt={usePrompt} />}
+        {view === 'games' && <GamesView onUsePrompt={usePrompt} />}
       </main>
 
       {modal?.kind === 'share' && (
