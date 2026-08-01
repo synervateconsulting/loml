@@ -501,7 +501,15 @@ body::before {
 
 .scrim {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Size to the *dynamic* viewport, not inset:0. On iOS Safari a fixed
+     inset:0 box is as tall as the layout viewport (toolbar hidden), so a
+     bottom-anchored sheet gets pinned behind the toolbar and its footer is
+     cut off. 100dvh tracks the visible viewport instead. */
+  height: 100vh; /* fallback for browsers without dvh */
+  height: 100dvh;
   z-index: 20;
   display: flex;
   align-items: flex-end;
