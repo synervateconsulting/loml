@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './api.js';
-import { actionLabel, isReveal } from './shares.js';
+import { actionLabel, isReveal, isThisThat } from './shares.js';
 import { pushSupported, permission, enablePush, syncBadge, clearDeliveredNotifications } from './push.js';
 import { eventIcon } from './calendar.js';
 import Login from './components/Login.jsx';
 import QuestionSection from './components/QuestionList.jsx';
 import ListsView from './components/ListsView.jsx';
-import DecksView from './components/DecksView.jsx';
+import GamesView from './components/GamesView.jsx';
 import CalendarView from './components/CalendarView.jsx';
 import Countdown from './components/Countdown.jsx';
 import {
@@ -23,7 +23,7 @@ const NAV = [
   ['shares', 'Shares'],
   ['keepsakes', 'Keepsakes'],
   ['lists', 'Lists'],
-  ['decks', 'Decks'],
+  ['games', 'Games'],
   ['spicy', '🔥😈🔥'],
 ];
 
@@ -33,6 +33,7 @@ export default function App() {
   const [data, setData] = useState({ asked: [], received: [] });
   const [couple, setCouple] = useState(null);
   const [calendar, setCalendar] = useState({ events: [], notifications: { needsAck: [], acknowledged: [] } });
+  const [usedGames, setUsedGames] = useState([]);
   const [tab, setTab] = useState('theirs');
   const [view, setView] = useState('shares');
   const [modal, setModal] = useState(null);
@@ -47,14 +48,16 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      const [questions, coupleState, cal] = await Promise.all([
+      const [questions, coupleState, cal, used] = await Promise.all([
         api.questions(),
         api.couple(),
         api.calendar(),
+        api.gamesUsed(),
       ]);
       setData(questions);
       setCouple(coupleState);
       setCalendar(cal);
+      setUsedGames(used?.keys || []);
       setError('');
     } catch (err) {
       setError(err.message);
@@ -174,19 +177,34 @@ export default function App() {
   const openView = (q, canEditAnswer) => setModal({ kind: 'view', question: q, canEditAnswer });
   // On "My shares", everything unacknowledged is editable — including a reveal
   // prompt (and your blind answer) while it's still waiting to be revealed.
-  const mineOpenLabel = () => 'Edit';
-  const mineOpenAction = (q) => setModal({ kind: 'edit', question: q });
+  // This/That can't be edited once sent — the asker just views their locked
+  // picks while waiting. Everything else opens the editor.
+  const mineOpenLabel = (q) => (isThisThat(q) ? 'View' : 'Edit');
+  const mineOpenAction = (q) =>
+    setModal(isThisThat(q) ? { kind: 'view', question: q } : { kind: 'edit', question: q });
 
   const signOut = async () => {
     await api.logout();
     setSession(null);
     setData({ asked: [], received: [] });
     setCalendar({ events: [], notifications: { needsAck: [], acknowledged: [] } });
+    setUsedGames([]);
     setView('shares');
   };
 
-  const usePrompt = (prompt) =>
-    setModal({ kind: 'share', initialKind: 'reveal', initialTitle: prompt, lockKind: true });
+  const usePrompt = (prompt, usedKey) =>
+    setModal({ kind: 'share', initialKind: 'reveal', initialTitle: prompt, usedKey: usedKey || null, lockKind: true });
+
+  // Start a This / That composer, optionally prefilled from a template.
+  const startThisThat = ({ title, items, usedKey }) =>
+    setModal({
+      kind: 'share',
+      initialKind: 'this_that',
+      initialTitle: title || '',
+      initialItems: items || null,
+      usedKey: usedKey || null,
+      lockKind: true,
+    });
 
   // The Theirs/Mine board, reused for both the normal and spicy tabs.
   const renderBoard = (received, asked) => {
@@ -438,7 +456,9 @@ export default function App() {
 
         {view === 'lists' && <ListsView />}
 
-        {view === 'decks' && <DecksView onUsePrompt={usePrompt} />}
+        {view === 'games' && (
+          <GamesView onUsePrompt={usePrompt} onStartThisThat={startThisThat} usedGames={usedGames} />
+        )}
       </main>
 
       {modal?.kind === 'share' && (
@@ -447,6 +467,8 @@ export default function App() {
           initialKind={modal.initialKind || 'question'}
           initialTitle={modal.initialTitle || ''}
           initialSpicy={Boolean(modal.initialSpicy)}
+          initialItems={modal.initialItems || null}
+          usedKey={modal.usedKey || null}
           lockKind={Boolean(modal.lockKind)}
           onClose={close}
           onDone={finish}

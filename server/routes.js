@@ -145,7 +145,7 @@ router.post('/push/subscribe', requireUser, async (req, res) => {
 
 /* -------------------------------------------------------------- questions */
 
-const SHARE_KINDS = ['question', 'memory', 'note', 'song', 'reveal'];
+const SHARE_KINDS = ['question', 'memory', 'note', 'song', 'reveal', 'this_that'];
 
 const QUESTION_SELECT = `
   SELECT q.id, q.kind, q.title, q.detail, q.link, q.artist, q.status, q.version,
@@ -188,6 +188,7 @@ async function reactionsFor(questionIds, responseIds) {
     `SELECT user_id, target_kind, target_id, emoji FROM reaction
       WHERE (target_kind = 'question' AND target_id = ANY($1::uuid[]))
          OR (target_kind = 'reveal'   AND target_id = ANY($1::uuid[]))
+         OR (target_kind = 'thisthat' AND target_id = ANY($1::uuid[]))
          OR (target_kind = 'response' AND target_id = ANY($2::uuid[]))`,
     [questionIds, responseIds]
   );
@@ -198,6 +199,25 @@ async function revealAnswersFor(questionIds) {
   if (!questionIds.length) return [];
   const { rows } = await query(
     'SELECT question_id, user_id, body FROM reveal_answer WHERE question_id = ANY($1::uuid[])',
+    [questionIds]
+  );
+  return rows;
+}
+
+async function thisThatItemsFor(questionIds) {
+  if (!questionIds.length) return [];
+  const { rows } = await query(
+    `SELECT id, question_id, position, left_label, right_label, left_icon, right_icon
+       FROM thisthat_item WHERE question_id = ANY($1::uuid[]) ORDER BY position`,
+    [questionIds]
+  );
+  return rows;
+}
+
+async function thisThatAnswersFor(questionIds) {
+  if (!questionIds.length) return [];
+  const { rows } = await query(
+    'SELECT question_id, item_id, user_id, choice FROM thisthat_answer WHERE question_id = ANY($1::uuid[])',
     [questionIds]
   );
   return rows;
@@ -216,9 +236,43 @@ const reactionsOn = (reactions, kind, id) =>
   reactions.filter((x) => x.target_kind === kind && x.target_id === id).map((x) => ({ userId: x.user_id, emoji: x.emoji }));
 
 function shapeQuestion(row, ctx) {
-  const { attachments, reactions, revealAnswers, keepers, viewerId, partnerId } = ctx;
+  const { attachments, reactions, revealAnswers, thisThatItems, thisThatAnswers, keepers, viewerId, partnerId } = ctx;
   const qAtt = attachments.filter((a) => a.question_id === row.id);
   const rAtt = attachments.filter((a) => row.response_id && a.response_id === row.response_id);
+
+  // This / That: a set of binary items, blind until both answer every item.
+  let thisThat = null;
+  if (row.kind === 'this_that') {
+    const items = (thisThatItems || [])
+      .filter((it) => it.question_id === row.id)
+      .map((it) => ({
+        id: it.id,
+        position: it.position,
+        leftLabel: it.left_label,
+        rightLabel: it.right_label,
+        leftIcon: it.left_icon || '',
+        rightIcon: it.right_icon || '',
+      }));
+    const answers = (thisThatAnswers || []).filter((a) => a.question_id === row.id);
+    const n = items.length;
+    const countFor = (uid) => answers.filter((a) => a.user_id === uid).length;
+    const iAnswered = n > 0 && countFor(viewerId) === n;
+    const revealed = n > 0 && countFor(row.asker_id) === n && countFor(row.recipient_id) === n;
+    const mapFor = (uid) => {
+      const m = {};
+      answers.filter((a) => a.user_id === uid).forEach((a) => (m[a.item_id] = a.choice));
+      return m;
+    };
+    thisThat = {
+      items,
+      revealed,
+      iAnswered,
+      myAnswers: mapFor(viewerId),
+      askerAnswers: revealed ? mapFor(row.asker_id) : null,
+      recipientAnswers: revealed ? mapFor(row.recipient_id) : null,
+      reactions: revealed ? reactionsOn(reactions, 'thisthat', row.id) : [],
+    };
+  }
 
   // Reveal prompts: the partner's blind answer stays hidden until both are in.
   let reveal = null;
@@ -253,6 +307,7 @@ function shapeQuestion(row, ctx) {
     keptByPartner: keepers.some((k) => k.question_id === row.id && k.user_id === partnerId),
     seenAt: row.seen_at,
     reveal,
+    thisThat,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     askerId: row.asker_id,
@@ -288,14 +343,17 @@ router.get('/questions', requireUser, async (req, res) => {
   );
   const qIds = rows.map((r) => r.id);
   const rIds = rows.filter((r) => r.response_id).map((r) => r.response_id);
-  const [attachments, reactions, revealAnswers, keepers, partner] = await Promise.all([
+  const ttIds = rows.filter((r) => r.kind === 'this_that').map((r) => r.id);
+  const [attachments, reactions, revealAnswers, thisThatItems, thisThatAnswers, keepers, partner] = await Promise.all([
     attachmentsFor(qIds, rIds),
     reactionsFor(qIds, rIds),
     revealAnswersFor(rows.filter((r) => r.kind === 'reveal').map((r) => r.id)),
+    thisThatItemsFor(ttIds),
+    thisThatAnswersFor(ttIds),
     keepersFor(qIds),
     partnerOf(req.user.id),
   ]);
-  const ctx = { attachments, reactions, revealAnswers, keepers, viewerId: req.user.id, partnerId: partner?.id };
+  const ctx = { attachments, reactions, revealAnswers, thisThatItems, thisThatAnswers, keepers, viewerId: req.user.id, partnerId: partner?.id };
   const shaped = rows.map((r) => shapeQuestion(r, ctx));
   res.json({
     asked: shaped.filter((q) => q.askerId === req.user.id),
@@ -310,10 +368,30 @@ router.post('/questions', requireUser, async (req, res) => {
   const artist = (req.body?.artist || '').trim();
   const revealAnswer = (req.body?.answer || '').trim(); // the asker's own blind answer
   const spicy = Boolean(req.body?.spicy);
+  const usedKey = (req.body?.usedKey || '').trim().slice(0, 120); // deck prompt / template it came from
   const kind = SHARE_KINDS.includes(req.body?.kind) ? req.body.kind : 'question';
   if (!title) return res.status(400).json({ error: 'Give it a title.' });
   if (kind === 'song' && !/^https?:\/\//i.test(link))
     return res.status(400).json({ error: 'Paste a link to the song.' });
+
+  // This / That: a set of >=3 binary items; the asker answers their own side
+  // up front (blind), like a reveal.
+  let ttItems = null;
+  if (kind === 'this_that') {
+    const raw = Array.isArray(req.body?.items) ? req.body.items : [];
+    ttItems = raw.slice(0, 20).map((it) => ({
+      leftLabel: String(it?.leftLabel || '').trim().slice(0, 60),
+      rightLabel: String(it?.rightLabel || '').trim().slice(0, 60),
+      leftIcon: String(it?.leftIcon || '').trim().slice(0, 8),
+      rightIcon: String(it?.rightIcon || '').trim().slice(0, 8),
+      choice: it?.choice === 'right' ? 'right' : it?.choice === 'left' ? 'left' : null,
+    }));
+    if (ttItems.length < 3) return res.status(400).json({ error: 'Add at least 3 this-or-thats.' });
+    if (ttItems.some((it) => !it.leftLabel || !it.rightLabel))
+      return res.status(400).json({ error: 'Each item needs both sides.' });
+    if (ttItems.some((it) => !it.choice))
+      return res.status(400).json({ error: 'Answer every item before sending.' });
+  }
 
   const partner = await partnerOf(req.user.id);
   if (!partner) return res.status(500).json({ error: 'No partner profile found.' });
@@ -340,7 +418,27 @@ router.post('/questions', requireUser, async (req, res) => {
         [id, req.user.id, revealAnswer]
       );
     }
+    if (kind === 'this_that') {
+      for (let i = 0; i < ttItems.length; i++) {
+        const it = ttItems[i];
+        const { rows: ir } = await client.query(
+          `INSERT INTO thisthat_item (question_id, position, left_label, right_label, left_icon, right_icon)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+          [id, i, it.leftLabel, it.rightLabel, it.leftIcon, it.rightIcon]
+        );
+        await client.query(
+          `INSERT INTO thisthat_answer (question_id, item_id, user_id, choice) VALUES ($1, $2, $3, $4)`,
+          [id, ir[0].id, req.user.id, it.choice]
+        );
+      }
+    }
     await client.query('COMMIT');
+    // Mark the source deck prompt / template as played (couple-wide, replayable).
+    if (usedKey)
+      await query('INSERT INTO game_used (game_key, used_by) VALUES ($1, $2) ON CONFLICT (game_key) DO NOTHING', [
+        usedKey,
+        req.user.id,
+      ]);
     await logActivity(req.user.id, 'shared', 'question', id, { title, kind, spicy });
     notify(
       partner.id,
@@ -731,6 +829,71 @@ router.post('/questions/:id/reveal', requireUser, async (req, res) => {
   }
 });
 
+// Answer a This / That set. Blind until both people have answered every item.
+router.post('/questions/:id/thisthat', requireUser, async (req, res) => {
+  const { rows } = await query(
+    "SELECT * FROM question WHERE id = $1 AND is_removed = false AND kind = 'this_that'",
+    [req.params.id]
+  );
+  const q = rows[0];
+  if (!q) return res.status(404).json({ error: 'Not found.' });
+  if (q.asker_id !== req.user.id && q.recipient_id !== req.user.id)
+    return res.status(403).json({ error: "This isn't yours." });
+
+  const mine = await query(
+    'SELECT count(*)::int AS n FROM thisthat_answer WHERE question_id = $1 AND user_id = $2',
+    [q.id, req.user.id]
+  );
+  if (mine.rows[0].n > 0) return res.status(409).json({ error: 'You already answered this one.' });
+
+  const items = await query('SELECT id FROM thisthat_item WHERE question_id = $1', [q.id]);
+  const itemIds = new Set(items.rows.map((r) => r.id));
+  const raw = Array.isArray(req.body?.answers) ? req.body.answers : [];
+  const chosen = new Map();
+  for (const a of raw) {
+    const itemId = String(a?.itemId || '');
+    const choice = a?.choice === 'right' ? 'right' : a?.choice === 'left' ? 'left' : null;
+    if (itemIds.has(itemId) && choice) chosen.set(itemId, choice);
+  }
+  if (chosen.size !== itemIds.size) return res.status(400).json({ error: 'Answer every item.' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const [itemId, choice] of chosen) {
+      await client.query(
+        `INSERT INTO thisthat_answer (question_id, item_id, user_id, choice) VALUES ($1, $2, $3, $4)`,
+        [q.id, itemId, req.user.id, choice]
+      );
+    }
+    const { rows: cc } = await client.query(
+      'SELECT user_id, count(*)::int AS n FROM thisthat_answer WHERE question_id = $1 GROUP BY user_id',
+      [q.id]
+    );
+    const n = itemIds.size;
+    const revealed = cc.length >= 2 && cc.every((r) => r.n >= n);
+    if (revealed)
+      await client.query("UPDATE question SET status = 'answered', updated_at = now() WHERE id = $1", [q.id]);
+    await client.query('COMMIT');
+    await logActivity(req.user.id, 'thisthat_answered', 'question', q.id, { revealed });
+    const other = q.asker_id === req.user.id ? q.recipient_id : q.asker_id;
+    notify(
+      other,
+      q.is_spicy
+        ? discreetReply(req.user.display_name)
+        : revealed
+          ? { title: `${req.user.display_name} answered — it's revealed`, body: q.title }
+          : { title: `${req.user.display_name} played This / That`, body: q.title }
+    );
+    res.status(201).json({ ok: true, revealed });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+});
+
 /* ---------------------------------------------------------------- keepsakes */
 
 router.post('/questions/:id/keepsake', requireUser, async (req, res) => {
@@ -763,13 +926,21 @@ router.post('/questions/:id/keepsake', requireUser, async (req, res) => {
   res.json({ ok: true, keptByMe: next });
 });
 
+/* -------------------------------------------------------------------- games */
+
+// Stable keys of deck prompts / This-That templates the couple has played.
+router.get('/games/used', requireUser, async (_req, res) => {
+  const { rows } = await query('SELECT game_key FROM game_used');
+  res.json({ keys: rows.map((r) => r.game_key) });
+});
+
 /* ---------------------------------------------------------------- reactions */
 
 const REACTION_EMOJI = ['❤️', '🔥', '😈', '😂', '🥹', '👀'];
 
 router.post('/reactions', requireUser, async (req, res) => {
   const { targetKind, targetId, emoji } = req.body || {};
-  if (!['question', 'response', 'reveal', 'event'].includes(targetKind))
+  if (!['question', 'response', 'reveal', 'event', 'thisthat'].includes(targetKind))
     return res.status(400).json({ error: 'Bad target.' });
 
   // Confirm the target is part of a share you're in, and figure out whether
@@ -804,6 +975,26 @@ router.post('/reactions', requireUser, async (req, res) => {
     );
     const q = rows[0];
     if (q && (q.asker_id === req.user.id || q.recipient_id === req.user.id) && Number(q.answered) >= 2) {
+      member = true;
+    }
+  } else if (targetKind === 'thisthat') {
+    // Only reactable once revealed (both answered every item).
+    const { rows } = await query(
+      `SELECT q.asker_id, q.recipient_id,
+              (SELECT count(*) FROM thisthat_item WHERE question_id = q.id) AS items,
+              (SELECT count(*) FROM thisthat_answer a WHERE a.question_id = q.id AND a.user_id = q.asker_id) AS asker_n,
+              (SELECT count(*) FROM thisthat_answer a WHERE a.question_id = q.id AND a.user_id = q.recipient_id) AS recip_n
+         FROM question q WHERE id = $1 AND kind = 'this_that' AND is_removed = false`,
+      [targetId]
+    );
+    const q = rows[0];
+    if (
+      q &&
+      (q.asker_id === req.user.id || q.recipient_id === req.user.id) &&
+      Number(q.items) > 0 &&
+      Number(q.asker_n) >= Number(q.items) &&
+      Number(q.recip_n) >= Number(q.items)
+    ) {
       member = true;
     }
   } else {
