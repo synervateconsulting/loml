@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from './api.js';
 import { actionLabel, isReveal } from './shares.js';
 import { pushSupported, permission, enablePush, syncBadge, clearDeliveredNotifications } from './push.js';
+import { eventIcon } from './calendar.js';
 import Login from './components/Login.jsx';
 import QuestionSection from './components/QuestionList.jsx';
 import ListsView from './components/ListsView.jsx';
@@ -303,7 +304,17 @@ export default function App() {
           </div>
         </div>
         <div className="countdownrow">
-          <Countdown countdown={couple} onEdit={() => setModal({ kind: 'countdown' })} />
+          {couple?.countdown ? (
+            <Countdown
+              title={couple.countdown.title}
+              startsAt={couple.countdown.startsAt}
+              allDay={couple.countdown.allDay}
+              icon={eventIcon(couple.countdown.kind)}
+              onClick={() => setModal({ kind: 'countdown' })}
+            />
+          ) : (
+            <Countdown empty onClick={() => setModal({ kind: 'countdown' })} />
+          )}
           <button
             type="button"
             className={`calbtn ${view === 'calendar' ? 'is-active' : ''}`}
@@ -372,6 +383,7 @@ export default function App() {
           <CalendarView
             events={calendar.events}
             notifications={calendar.notifications}
+            countdownEventId={couple?.countdown?.eventId || null}
             meId={me.id}
             partner={partner}
             onChanged={load}
@@ -456,7 +468,7 @@ export default function App() {
         />
       )}
       {modal?.kind === 'countdown' && (
-        <CountdownModal countdown={couple} onClose={close} onDone={finish} />
+        <CountdownModal countdown={couple?.countdown} onClose={close} onDone={finish} />
       )}
     </div>
   );

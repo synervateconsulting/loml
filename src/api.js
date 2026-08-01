@@ -32,7 +32,10 @@ export const api = {
   react: (targetKind, targetId, emoji) => request('POST', '/reactions', { targetKind, targetId, emoji }),
   markSeen: (kind, id) => request('POST', '/seen', { kind, id }),
   couple: () => request('GET', '/couple'),
-  setCountdown: (title, date, time) => request('POST', '/couple/countdown', { title, date, time }),
+  // fields: { kind, title, startsAt, allDay }
+  setCountdown: (fields) => request('POST', '/couple/countdown', fields),
+  clearCountdown: () => request('POST', '/couple/countdown', { clear: true }),
+  selectCountdown: (eventId) => request('POST', '/couple/countdown/select', { eventId }),
   thinkingOfYou: () => request('POST', '/nudge'),
   nudges: () => request('GET', '/nudges'),
   lists: () => request('GET', '/lists'),

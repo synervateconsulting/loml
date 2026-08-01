@@ -241,6 +241,7 @@ CREATE TABLE IF NOT EXISTS calendar_event (
   kind         TEXT NOT NULL CHECK (kind IN ('vacation', 'appointment', 'work_trip', 'date_night', 'other')),
   title        TEXT NOT NULL,
   starts_at    TIMESTAMP NOT NULL,
+  all_day      BOOLEAN NOT NULL DEFAULT false,
   description  TEXT NOT NULL DEFAULT '',
   location     TEXT NOT NULL DEFAULT '',
   created_by   INTEGER NOT NULL REFERENCES app_user(id),
@@ -249,6 +250,7 @@ CREATE TABLE IF NOT EXISTS calendar_event (
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   is_removed   BOOLEAN NOT NULL DEFAULT false
 );
+ALTER TABLE calendar_event ADD COLUMN IF NOT EXISTS all_day BOOLEAN NOT NULL DEFAULT false;
 
 CREATE INDEX IF NOT EXISTS calendar_event_start_idx ON calendar_event (starts_at);
 
@@ -277,3 +279,27 @@ CREATE TABLE IF NOT EXISTS event_notification (
 );
 
 CREATE INDEX IF NOT EXISTS event_notification_to_idx ON event_notification (to_id, acknowledged);
+
+-- The countdown is now a pointer to a calendar event.
+ALTER TABLE couple_state ADD COLUMN IF NOT EXISTS countdown_event_id UUID REFERENCES calendar_event(id);
+
+-- One-time migration: fold any existing standalone countdown into a calendar
+-- event and point at it, then clear the old columns so this never runs twice.
+DO $$
+DECLARE cs RECORD; eid UUID;
+BEGIN
+  SELECT * INTO cs FROM couple_state WHERE id = 1;
+  IF cs.countdown_date IS NOT NULL AND cs.countdown_event_id IS NULL THEN
+    INSERT INTO calendar_event (kind, title, starts_at, all_day, created_by, updated_by)
+    VALUES ('other',
+            COALESCE(NULLIF(cs.countdown_title, ''), 'Countdown'),
+            (cs.countdown_date + COALESCE(cs.countdown_time, TIME '00:00')),
+            (cs.countdown_time IS NULL),
+            COALESCE(cs.updated_by, (SELECT MIN(id) FROM app_user)),
+            COALESCE(cs.updated_by, (SELECT MIN(id) FROM app_user)))
+    RETURNING id INTO eid;
+    UPDATE couple_state
+       SET countdown_event_id = eid, countdown_title = NULL, countdown_date = NULL, countdown_time = NULL
+     WHERE id = 1;
+  END IF;
+END $$;

@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { api } from '../api.js';
 import { EVENT_TYPES, eventIcon, eventLabel, dayKeyOf, formatEventWhen, formatStamp } from '../calendar.js';
-import { Modal } from './Modals.jsx';
+import { Modal, WhenFields } from './Modals.jsx';
 import { Reactions } from './Reactions.jsx';
 import Confirm from './Confirm.jsx';
+import Countdown from './Countdown.jsx';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const MONTHS = [
@@ -28,16 +29,18 @@ const prettyDay = (dayKey) => {
 
 /* ------------------------------------------------------------- event editor */
 
-function EventEditor({ event, defaultDate, onClose, onSaved, onRemoved }) {
+function EventEditor({ event, defaultDate, partner, isCountdown, onClose, onSaved, onRemoved, onChanged }) {
   const isNew = !event;
   const [kind, setKind] = useState(event?.kind || 'date_night');
   const [title, setTitle] = useState(event?.title || '');
+  const [allDay, setAllDay] = useState(event?.allDay ?? false);
   const [startsAt, setStartsAt] = useState(event?.startsAt || (defaultDate ? `${defaultDate}T19:00` : ''));
   const [location, setLocation] = useState(event?.location || '');
   const [description, setDescription] = useState(event?.description || '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [confirmCountdown, setConfirmCountdown] = useState(false);
 
   const canSave = kind && title.trim() && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(startsAt) && !busy;
 
@@ -49,6 +52,7 @@ function EventEditor({ event, defaultDate, onClose, onSaved, onRemoved }) {
         kind,
         title: title.trim(),
         startsAt,
+        allDay,
         location: location.trim(),
         description: description.trim(),
       };
@@ -72,9 +76,23 @@ function EventEditor({ event, defaultDate, onClose, onSaved, onRemoved }) {
     }
   };
 
+  const setAsCountdown = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await api.selectCountdown(event.id);
+      await onChanged();
+      onClose();
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  };
+
   return (
     <>
       <Modal
+        onScrimClick={onClose}
         eyebrow="For the two of you"
         title={isNew ? 'Add to the calendar' : 'Edit event'}
         footer={
@@ -114,15 +132,7 @@ function EventEditor({ event, defaultDate, onClose, onSaved, onRemoved }) {
             onChange={(e) => setTitle(e.target.value)}
           />
         </label>
-        <label className="field">
-          <span className="field__label">When</span>
-          <input
-            className="field__input"
-            type="datetime-local"
-            value={startsAt}
-            onChange={(e) => setStartsAt(e.target.value)}
-          />
-        </label>
+        <WhenFields allDay={allDay} setAllDay={setAllDay} startsAt={startsAt} setStartsAt={setStartsAt} />
         <label className="field">
           <span className="field__label">Location (optional)</span>
           <input
@@ -144,9 +154,18 @@ function EventEditor({ event, defaultDate, onClose, onSaved, onRemoved }) {
           />
         </label>
         {!isNew && (
-          <button type="button" className="linkbtn linkbtn--danger" onClick={() => setConfirmRemove(true)}>
-            Remove this event
-          </button>
+          <div className="editoractions">
+            {isCountdown ? (
+              <span className="hint">★ This is your current countdown.</span>
+            ) : (
+              <button type="button" className="linkbtn" onClick={() => setConfirmCountdown(true)}>
+                ★ Set as our countdown
+              </button>
+            )}
+            <button type="button" className="linkbtn linkbtn--danger" onClick={() => setConfirmRemove(true)}>
+              Remove this event
+            </button>
+          </div>
         )}
         {error && <p className="notice notice--error">{error}</p>}
       </Modal>
@@ -162,6 +181,21 @@ function EventEditor({ event, defaultDate, onClose, onSaved, onRemoved }) {
           }}
         />
       )}
+      {confirmCountdown && (
+        <Confirm
+          steps={[
+            {
+              title: 'Set as your countdown?',
+              body: `This will change the countdown for ${partner} too.`,
+              confirm: 'Set it',
+            },
+          ]}
+          onResolve={(ok) => {
+            setConfirmCountdown(false);
+            if (ok) setAsCountdown();
+          }}
+        />
+      )}
     </>
   );
 }
@@ -174,7 +208,7 @@ function EventViewer({ event, meId, onEdit, onClose, onChanged }) {
 
   if (!event) {
     return (
-      <Modal title="Event" footer={<button type="button" className="btn btn--ghost" onClick={onClose}>Close</button>}>
+      <Modal onScrimClick={onClose} title="Event" footer={<button type="button" className="btn btn--ghost" onClick={onClose}>Close</button>}>
         <p className="prose">This event was removed.</p>
       </Modal>
     );
@@ -197,6 +231,7 @@ function EventViewer({ event, meId, onEdit, onClose, onChanged }) {
 
   return (
     <Modal
+      onScrimClick={onClose}
       eyebrow={`${eventIcon(event.kind)} ${eventLabel(event.kind)}`}
       title={event.title}
       footer={
@@ -210,7 +245,7 @@ function EventViewer({ event, meId, onEdit, onClose, onChanged }) {
         </div>
       }
     >
-      <p className="prose">{formatEventWhen(event.startsAt)}</p>
+      <p className="prose">{formatEventWhen(event.startsAt, event.allDay)}</p>
       {event.location && <p className="calloc">📍 {event.location}</p>}
       {event.description && <p className="prose">{event.description}</p>}
       <p className="calmeta">
@@ -256,7 +291,7 @@ function EventViewer({ event, meId, onEdit, onClose, onChanged }) {
 
 /* ---------------------------------------------------------------- main view */
 
-export default function CalendarView({ events, notifications, meId, partner, onChanged }) {
+export default function CalendarView({ events, notifications, countdownEventId, meId, partner, onChanged }) {
   const now = new Date();
   const [cursor, setCursor] = useState({ y: now.getFullYear(), m: now.getMonth() });
   const [pane, setPane] = useState('month');
@@ -266,6 +301,10 @@ export default function CalendarView({ events, notifications, meId, partner, onC
 
   const needsAck = notifications?.needsAck || [];
   const acknowledged = notifications?.acknowledged || [];
+  const today = todayKey();
+  const upcoming = events
+    .filter((e) => dayKeyOf(e.startsAt) >= today)
+    .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
 
   const eventsOn = (key) => events.filter((e) => dayKeyOf(e.startsAt) === key);
   const viewingEvent = viewId ? events.find((e) => e.id === viewId) : null;
@@ -312,20 +351,30 @@ export default function CalendarView({ events, notifications, meId, partner, onC
   return (
     <div className="calendar">
       <div className="calbar">
-        <button
-          type="button"
-          className="topnav__item"
-          onClick={() => setPane(pane === 'month' ? 'notifications' : 'month')}
-        >
-          {pane === 'month' ? (
-            <>
-              Notifications
-              {needsAck.length > 0 && <span className="pill">{needsAck.length}</span>}
-            </>
-          ) : (
-            '← Back to calendar'
-          )}
-        </button>
+        <div className="calpanes" role="group" aria-label="Calendar panes">
+          <button
+            type="button"
+            className={`topnav__item ${pane === 'month' ? 'is-active' : ''}`}
+            onClick={() => setPane('month')}
+          >
+            Calendar
+          </button>
+          <button
+            type="button"
+            className={`topnav__item ${pane === 'upcoming' ? 'is-active' : ''}`}
+            onClick={() => setPane('upcoming')}
+          >
+            Upcoming
+          </button>
+          <button
+            type="button"
+            className={`topnav__item ${pane === 'notifications' ? 'is-active' : ''}`}
+            onClick={() => setPane('notifications')}
+          >
+            Notifications
+            {needsAck.length > 0 && <span className="pill">{needsAck.length}</span>}
+          </button>
+        </div>
         {pane === 'month' && (
           <button
             type="button"
@@ -337,7 +386,7 @@ export default function CalendarView({ events, notifications, meId, partner, onC
         )}
       </div>
 
-      {pane === 'month' ? (
+      {pane === 'month' && (
         <>
           <div className="calhead">
             <button type="button" className="calnav" aria-label="Previous month" onClick={() => step(-1)}>
@@ -379,7 +428,29 @@ export default function CalendarView({ events, notifications, meId, partner, onC
             })}
           </div>
         </>
-      ) : (
+      )}
+
+      {pane === 'upcoming' && (
+        <div className="upcoming">
+          {upcoming.length === 0 ? (
+            <p className="empty">Nothing upcoming. Add an event from the calendar.</p>
+          ) : (
+            upcoming.map((e) => (
+              <Countdown
+                key={e.id}
+                title={e.title}
+                startsAt={e.startsAt}
+                allDay={e.allDay}
+                icon={eventIcon(e.kind)}
+                tag={e.id === countdownEventId ? 'Countdown' : null}
+                onClick={() => openEvent(e.id)}
+              />
+            ))
+          )}
+        </div>
+      )}
+
+      {pane === 'notifications' && (
         <div className="notiflist">
           <NoteSection
             heading="Needs acknowledgment"
@@ -399,6 +470,7 @@ export default function CalendarView({ events, notifications, meId, partner, onC
 
       {dayKey && (
         <Modal
+          onScrimClick={() => setDayKey(null)}
           eyebrow="On this day"
           title={prettyDay(dayKey)}
           footer={
@@ -430,7 +502,7 @@ export default function CalendarView({ events, notifications, meId, partner, onC
                     <span className="evrow__icon">{eventIcon(e.kind)}</span>
                     <span className="evrow__body">
                       <span className="evrow__title">{e.title}</span>
-                      <span className="evrow__time">{formatEventWhen(e.startsAt)}</span>
+                      <span className="evrow__time">{formatEventWhen(e.startsAt, e.allDay)}</span>
                     </span>
                   </button>
                 </li>
@@ -454,9 +526,12 @@ export default function CalendarView({ events, notifications, meId, partner, onC
         <EventEditor
           event={editingEvent}
           defaultDate={edit.date}
+          partner={partner}
+          isCountdown={Boolean(editingEvent && editingEvent.id === countdownEventId)}
           onClose={() => setEdit(null)}
           onSaved={afterSave}
           onRemoved={afterRemove}
+          onChanged={onChanged}
         />
       )}
     </div>

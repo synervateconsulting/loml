@@ -1,11 +1,9 @@
 import { useEffect, useState } from 'react';
 
-// Days until the shared "next time", with the full date/time shown. When a
-// specific time is set it ticks live down to the second. Tapping opens the
-// editor.
+// A countdown banner for a single dated thing (the selected countdown, or any
+// upcoming event). Ticks live to the second when a time is set; an all-day one
+// just shows a day count. `empty` renders the "set a countdown" call to action.
 
-// Build a local Date from 'YYYY-MM-DD' (+ optional 'HH:MM'), avoiding the
-// timezone drift you'd get from `new Date('2026-09-01')` (parsed as UTC).
 const toLocal = (dateStr, timeStr) => {
   const [y, m, d] = dateStr.split('-').map(Number);
   if (timeStr) {
@@ -35,8 +33,6 @@ const formatWhen = (target, hasTime) => {
 };
 
 const pad = (n) => String(n).padStart(2, '0');
-
-// Live remaining string down to the second.
 const liveRemaining = (ms) => {
   const s = Math.floor(ms / 1000);
   const days = Math.floor(s / 86400);
@@ -49,28 +45,26 @@ const liveRemaining = (ms) => {
   return `${secs}s`;
 };
 
-export default function Countdown({ countdown, onEdit }) {
-  const date = countdown?.countdownDate || null;
-  const time = countdown?.countdownTime || null;
+export default function Countdown({ empty, emptyLabel = '+ Set a countdown', title, startsAt, allDay, icon, tag, onClick }) {
+  const date = empty ? null : (startsAt || '').slice(0, 10);
+  const time = !empty && !allDay ? (startsAt || '').slice(11, 16) : null;
 
-  // Tick every second only when a time is set (otherwise a day count is enough).
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!date || !time) return undefined;
+    if (empty || !time) return undefined;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [date, time]);
+  }, [empty, time]);
 
-  if (!date) {
+  if (empty || !date) {
     return (
-      <button type="button" className="countdown countdown--empty" onClick={onEdit}>
-        + Set a countdown
+      <button type="button" className="countdown countdown--empty" onClick={onClick}>
+        {emptyLabel}
       </button>
     );
   }
 
   const target = toLocal(date, time);
-  const title = countdown.countdownTitle || 'Countdown';
   const when = formatWhen(target, Boolean(time));
 
   let num;
@@ -92,10 +86,14 @@ export default function Countdown({ countdown, onEdit }) {
   }
 
   return (
-    <button type="button" className="countdown" onClick={onEdit}>
+    <button type="button" className="countdown" onClick={onClick}>
       <span className="countdown__num">{num}</span>
       <span className="countdown__body">
-        <span className="countdown__title">{title}</span>
+        <span className="countdown__title">
+          {icon ? `${icon} ` : ''}
+          {title || 'Countdown'}
+          {tag && <span className="countdown__tag">{tag}</span>}
+        </span>
         <span className="countdown__when">{when}</span>
         <span className={`countdown__sub ${time ? 'countdown__sub--live' : ''}`}>{sub}</span>
       </span>

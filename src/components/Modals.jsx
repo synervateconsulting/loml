@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { SHARE_KINDS, kindOf, isQuestion, isReveal, isSong, kindLabel } from '../shares.js';
+import { EVENT_TYPES } from '../calendar.js';
 import Confirm, { discardSteps, sendSteps } from './Confirm.jsx';
 import { Attachments } from './Media.jsx';
 import { Reactions } from './Reactions.jsx';
@@ -217,6 +218,7 @@ export function ShareModal({
   return (
     <>
       <Modal
+        onScrimClick={cancel}
         eyebrow={`For ${partnerName}`}
         title={copy.title}
         footer={
@@ -393,6 +395,7 @@ export function RespondModal({ question, meId, onClose, onDone }) {
   return (
     <>
       <Modal
+        onScrimClick={cancel}
         eyebrow={copy.heading}
         title={question.title}
         footer={
@@ -502,6 +505,7 @@ export function EditQuestionModal({ question, onClose, onDone }) {
   return (
     <>
       <Modal
+        onScrimClick={cancel}
         eyebrow={`Waiting on ${question.recipientName}`}
         title={reveal ? 'Edit your prompt' : `Edit your ${noun}`}
         footer={
@@ -601,6 +605,7 @@ function RevealView({ question, meId, onClose }) {
 
   return (
     <Modal
+      onScrimClick={onClose}
       eyebrow="Answer together"
       title={question.title}
       footer={
@@ -730,6 +735,7 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone }) {
   return (
     <>
       <Modal
+        onScrimClick={cancel}
         eyebrow={
           canEditAnswer
             ? question_
@@ -812,18 +818,83 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone }) {
 
 /* ---------------------------------------------------------- countdown editor */
 
+// Shared "when" picker: all-day (date) vs a specific time (datetime).
+export function WhenFields({ allDay, setAllDay, startsAt, setStartsAt }) {
+  return (
+    <>
+      <div className="field">
+        <span className="field__label">When</span>
+        <div className="segmented" role="group" aria-label="All day or a time">
+          <button
+            type="button"
+            className={`segmented__opt ${allDay ? 'is-active' : ''}`}
+            aria-pressed={allDay}
+            onClick={() => {
+              setAllDay(true);
+              if (startsAt) setStartsAt(`${startsAt.slice(0, 10)}T00:00`);
+            }}
+          >
+            All day
+          </button>
+          <button
+            type="button"
+            className={`segmented__opt ${!allDay ? 'is-active' : ''}`}
+            aria-pressed={!allDay}
+            onClick={() => setAllDay(false)}
+          >
+            At a time
+          </button>
+        </div>
+      </div>
+      <label className="field">
+        <span className="field__label">{allDay ? 'Date' : 'Date & time'}</span>
+        {allDay ? (
+          <input
+            className="field__input"
+            type="date"
+            value={startsAt.slice(0, 10)}
+            onChange={(e) => setStartsAt(`${e.target.value}T00:00`)}
+          />
+        ) : (
+          <input
+            className="field__input"
+            type="datetime-local"
+            value={startsAt}
+            onChange={(e) => setStartsAt(e.target.value)}
+          />
+        )}
+      </label>
+    </>
+  );
+}
+
 export function CountdownModal({ countdown, onClose, onDone }) {
-  const [title, setTitle] = useState(countdown?.countdownTitle || '');
-  const [date, setDate] = useState((countdown?.countdownDate || '').slice(0, 10));
-  const [time, setTime] = useState(countdown?.countdownTime || '');
+  const cur = countdown || null; // { eventId, kind, title, startsAt, allDay } | null
+  const [kind, setKind] = useState(cur?.kind || 'other');
+  const [title, setTitle] = useState(cur?.title || '');
+  const [allDay, setAllDay] = useState(cur?.allDay ?? true);
+  const [startsAt, setStartsAt] = useState(cur?.startsAt || '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  const save = async (clear = false) => {
+  const canSave = title.trim() && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(startsAt) && !busy;
+
+  const save = async () => {
     setBusy(true);
     setError('');
     try {
-      await api.setCountdown(clear ? '' : title, clear ? '' : date, clear ? '' : time);
+      await api.setCountdown({ kind, title: title.trim(), startsAt, allDay });
+      onDone();
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  };
+  const clear = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await api.clearCountdown();
       onDone();
     } catch (err) {
       setError(err.message);
@@ -833,6 +904,7 @@ export function CountdownModal({ countdown, onClose, onDone }) {
 
   return (
     <Modal
+      onScrimClick={onClose}
       eyebrow="The two of you"
       title="Set a countdown"
       footer={
@@ -840,12 +912,28 @@ export function CountdownModal({ countdown, onClose, onDone }) {
           <button type="button" className="btn btn--ghost" onClick={onClose}>
             Cancel
           </button>
-          <button type="button" className="btn btn--primary" onClick={() => save(false)} disabled={!date || busy}>
+          <button type="button" className="btn btn--primary" onClick={save} disabled={!canSave}>
             Save
           </button>
         </>
       }
     >
+      <div className="field">
+        <span className="field__label">Type</span>
+        <div className="segmented segmented--wrap" role="group" aria-label="Event type">
+          {EVENT_TYPES.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              className={`segmented__opt ${kind === t.key ? 'is-active' : ''}`}
+              aria-pressed={kind === t.key}
+              onClick={() => setKind(t.key)}
+            >
+              {t.icon} {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <label className="field">
         <span className="field__label">What is it?</span>
         <input
@@ -856,25 +944,13 @@ export function CountdownModal({ countdown, onClose, onDone }) {
           onChange={(e) => setTitle(e.target.value)}
         />
       </label>
-      <label className="field">
-        <span className="field__label">The day</span>
-        <input className="field__input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-      </label>
-      <label className="field">
-        <span className="field__label">Time (optional)</span>
-        <input
-          className="field__input"
-          type="time"
-          value={time}
-          disabled={!date}
-          onChange={(e) => setTime(e.target.value)}
-        />
-      </label>
-      {countdown?.countdownDate && (
-        <button type="button" className="linkbtn linkbtn--danger" onClick={() => save(true)} disabled={busy}>
+      <WhenFields allDay={allDay} setAllDay={setAllDay} startsAt={startsAt} setStartsAt={setStartsAt} />
+      {cur && (
+        <button type="button" className="linkbtn linkbtn--danger" onClick={clear} disabled={busy}>
           Clear the countdown
         </button>
       )}
+      <p className="hint">Shared — this also lives on your calendar.</p>
       {error && <p className="notice notice--error">{error}</p>}
     </Modal>
   );
