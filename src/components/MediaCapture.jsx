@@ -2,9 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 
 /*
  * Staging control for outgoing media. It never talks to the server; it hands
- * the parent a list of pending items (an upload File or a recorded Blob plus
- * metadata) and the parent uploads them once the question or answer is saved
- * and an id exists to attach them to.
+ * the parent a list of pending items (an upload File, a recorded Blob, or a
+ * captured photo, plus metadata) and the parent uploads them once the question
+ * or answer is saved and an id exists to attach them to.
+ *
+ * Camera flows (video / photo) open the camera first and let the person start
+ * the recording or take the shot themselves. Audio starts right away.
  *
  * A staged item:
  *   { key, file, fileName, mimeType, mediaKind, size, durationSecs, url }
@@ -35,13 +38,12 @@ function pickMime(candidates) {
   return candidates.find((t) => MediaRecorder.isTypeSupported(t)) || '';
 }
 
-const canRecord = () =>
-  typeof navigator !== 'undefined' &&
-  navigator.mediaDevices?.getUserMedia &&
-  typeof MediaRecorder !== 'undefined';
+const hasCamera = () => typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
+const canRecord = () => hasCamera() && typeof MediaRecorder !== 'undefined';
 
 export default function MediaCapture({ items, onChange, maxBytes = 60 * MB, disabled = false }) {
-  const [mode, setMode] = useState('idle'); // 'idle' | 'audio' | 'video'
+  // 'idle' | 'audio' | 'video-armed' | 'video-rec' | 'photo'
+  const [mode, setMode] = useState('idle');
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState('');
 
@@ -52,6 +54,11 @@ export default function MediaCapture({ items, onChange, maxBytes = 60 * MB, disa
   const startedAtRef = useRef(0);
   const tickRef = useRef(null);
   const previewVideoRef = useRef(null);
+  const liveRef = useRef(null);
+
+  const live = mode !== 'idle';
+  const showPreview = mode === 'video-armed' || mode === 'video-rec' || mode === 'photo';
+  const isRecording = mode === 'audio' || mode === 'video-rec';
 
   // Revoke every preview URL we made when the control unmounts.
   const itemsRef = useRef(items);
@@ -65,12 +72,16 @@ export default function MediaCapture({ items, onChange, maxBytes = 60 * MB, disa
     []
   );
 
-  // Attach the live camera stream once the <video> is actually in the DOM.
+  // Attach the live camera stream once the <video> is in the DOM, and scroll the
+  // camera panel into view so it isn't hidden below the fold.
   useEffect(() => {
-    if (mode === 'video' && previewVideoRef.current && streamRef.current) {
+    if (showPreview && previewVideoRef.current && streamRef.current) {
       previewVideoRef.current.srcObject = streamRef.current;
     }
-  }, [mode]);
+    if (live && liveRef.current) {
+      liveRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function stopTracks() {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -93,8 +104,8 @@ export default function MediaCapture({ items, onChange, maxBytes = 60 * MB, disa
     };
   }
 
-  // Single recorded take. Reads the live list via the ref because this runs
-  // from the async recorder stop, after `items` may have moved on.
+  // Reads the live list via the ref because captures finish asynchronously,
+  // after `items` may have moved on.
   function stageOne(file, meta) {
     if (file.size > maxBytes) {
       setError(oversize(file.size));
@@ -132,78 +143,133 @@ export default function MediaCapture({ items, onChange, maxBytes = 60 * MB, disa
     if (rejected) setError(oversize(rejected.size));
   }
 
-  async function startRecording(kind) {
+  function cameraError(err) {
+    stopTracks();
+    setError(
+      err?.name === 'NotAllowedError'
+        ? 'Camera / microphone permission is needed.'
+        : 'Could not open the camera on this device.'
+    );
+    setMode('idle');
+  }
+
+  // Wire up and start a recorder on the current stream.
+  function buildRecorder(kind) {
+    const mimeType =
+      kind === 'video'
+        ? pickMime([
+            'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+            'video/mp4;codecs=avc1,mp4a',
+            'video/mp4',
+            'video/webm;codecs=vp8,opus',
+            'video/webm',
+          ])
+        : pickMime([
+            'audio/mp4;codecs=mp4a.40.2',
+            'audio/mp4',
+            'audio/aac',
+            'audio/webm;codecs=opus',
+            'audio/webm',
+          ]);
+
+    const recorder = new MediaRecorder(streamRef.current, mimeType ? { mimeType } : undefined);
+    chunksRef.current = [];
+    recorder.ondataavailable = (ev) => ev.data.size && chunksRef.current.push(ev.data);
+    recorder.onstop = () => {
+      const type = recorder.mimeType || mimeType || (kind === 'video' ? 'video/webm' : 'audio/webm');
+      const blob = new Blob(chunksRef.current, { type });
+      const secs = (Date.now() - startedAtRef.current) / 1000;
+      const ext = /mp4|avc1|mp4a|m4a/i.test(type)
+        ? kind === 'video'
+          ? 'mp4'
+          : 'm4a'
+        : /aac/i.test(type)
+          ? 'aac'
+          : 'webm';
+      stageOne(blob, {
+        fileName: `${kind}-${clock(secs).replace(':', 'm')}s.${ext}`,
+        mimeType: type,
+        durationSecs: secs,
+      });
+      stopTracks();
+    };
+
+    recorderRef.current = recorder;
+    recorder.start();
+    startedAtRef.current = Date.now();
+    setElapsed(0);
+    tickRef.current = setInterval(() => setElapsed((Date.now() - startedAtRef.current) / 1000), 200);
+  }
+
+  // Audio: start right away (nothing to preview).
+  async function startAudio() {
     setError('');
     if (!canRecord()) {
       setError('This browser cannot record. You can still upload a file.');
       return;
     }
     try {
-      const constraints =
-        kind === 'video' ? { audio: true, video: { facingMode: 'user' } } : { audio: true };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      streamRef.current = stream;
-
-      // Prefer MP4/H.264+AAC: it plays on iOS Safari as well as Chrome, and
-      // (unlike MediaRecorder webm) carries duration so the scrubber works.
-      // Fall back to webm on browsers that can only record that.
-      const mimeType =
-        kind === 'video'
-          ? pickMime([
-              'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-              'video/mp4;codecs=avc1,mp4a',
-              'video/mp4',
-              'video/webm;codecs=vp8,opus',
-              'video/webm',
-            ])
-          : pickMime([
-              'audio/mp4;codecs=mp4a.40.2',
-              'audio/mp4',
-              'audio/aac',
-              'audio/webm;codecs=opus',
-              'audio/webm',
-            ]);
-
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      chunksRef.current = [];
-      recorder.ondataavailable = (ev) => ev.data.size && chunksRef.current.push(ev.data);
-      recorder.onstop = () => {
-        const type = recorder.mimeType || mimeType || (kind === 'video' ? 'video/webm' : 'audio/webm');
-        const blob = new Blob(chunksRef.current, { type });
-        const secs = (Date.now() - startedAtRef.current) / 1000;
-        const ext = /mp4|avc1|mp4a|m4a/i.test(type)
-          ? kind === 'video'
-            ? 'mp4'
-            : 'm4a'
-          : /aac/i.test(type)
-            ? 'aac'
-            : 'webm';
-        stageOne(blob, {
-          fileName: `${kind}-${clock(secs).replace(':', 'm')}s.${ext}`,
-          mimeType: type,
-          durationSecs: secs,
-        });
-        stopTracks();
-      };
-
-      recorderRef.current = recorder;
-      recorder.start();
-      startedAtRef.current = Date.now();
-      setElapsed(0);
-      setMode(kind);
-      tickRef.current = setInterval(
-        () => setElapsed((Date.now() - startedAtRef.current) / 1000),
-        200
-      );
-      // The <video> preview is wired up by the effect on `mode`, once mounted.
+      streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setMode('audio');
+      buildRecorder('audio');
     } catch (err) {
-      stopTracks();
-      setError(
-        err?.name === 'NotAllowedError'
-          ? 'Recording needs microphone and camera permission.'
-          : 'Could not start recording on this device.'
-      );
+      cameraError(err);
     }
+  }
+
+  // Video / photo: open the camera first; the person starts it themselves.
+  async function openCamera(kind) {
+    setError('');
+    if (kind === 'video' && !canRecord()) {
+      setError('This browser cannot record video. You can still upload one.');
+      return;
+    }
+    if (!hasCamera()) {
+      setError('No camera access on this device.');
+      return;
+    }
+    try {
+      streamRef.current = await navigator.mediaDevices.getUserMedia({
+        audio: kind === 'video',
+        video: { facingMode: 'user' },
+      });
+      setMode(kind === 'video' ? 'video-armed' : 'photo');
+    } catch (err) {
+      cameraError(err);
+    }
+  }
+
+  function beginVideoRecording() {
+    try {
+      buildRecorder('video');
+      setMode('video-rec');
+    } catch (err) {
+      cameraError(err);
+    }
+  }
+
+  function takePhoto() {
+    const video = previewVideoRef.current;
+    if (!video || !video.videoWidth) {
+      setError('The camera is still warming up — try again in a second.');
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          const file = new File([blob], `photo-${Date.now()}.jpg`, { type: 'image/jpeg' });
+          stageOne(file, { fileName: file.name, mimeType: 'image/jpeg', durationSecs: null });
+        }
+        stopTracks();
+        setMode('idle');
+      },
+      'image/jpeg',
+      0.92
+    );
   }
 
   function finishRecording(keep) {
@@ -222,68 +288,76 @@ export default function MediaCapture({ items, onChange, maxBytes = 60 * MB, disa
     setElapsed(0);
   }
 
-  const recording = mode !== 'idle';
+  // Back out of an armed camera (nothing captured yet).
+  function cancelCamera() {
+    stopTracks();
+    if (previewVideoRef.current) previewVideoRef.current.srcObject = null;
+    setMode('idle');
+  }
 
   return (
     <div className="capture">
-      {recording ? (
-        <div className="capture__live">
-          {mode === 'video' && (
-            <video
-              ref={previewVideoRef}
-              className="capture__preview"
-              autoPlay
-              muted
-              playsInline
-            />
+      {live ? (
+        <div className="capture__live" ref={liveRef}>
+          {showPreview && (
+            <video ref={previewVideoRef} className="capture__preview" autoPlay muted playsInline />
           )}
-          <div className="capture__liverow">
-            <span className="capture__rec" aria-hidden="true" />
-            <span className="capture__timer">{clock(elapsed)}</span>
-            <span className="capture__label">Recording {mode}…</span>
-          </div>
+
+          {isRecording ? (
+            <div className="capture__liverow">
+              <span className="capture__rec" aria-hidden="true" />
+              <span className="capture__timer">{clock(elapsed)}</span>
+              <span className="capture__label">Recording {mode === 'audio' ? 'audio' : 'video'}…</span>
+            </div>
+          ) : (
+            <div className="capture__liverow">
+              <span className="capture__label">
+                {mode === 'photo' ? 'Line up your shot' : 'Ready when you are'}
+              </span>
+            </div>
+          )}
+
           <div className="capture__liveactions">
-            <button
-              type="button"
-              className="btn btn--small btn--ghost"
-              onClick={() => finishRecording(false)}
-            >
-              Discard
-            </button>
-            <button
-              type="button"
-              className="btn btn--small btn--primary"
-              onClick={() => finishRecording(true)}
-            >
-              Stop &amp; attach
-            </button>
+            {isRecording ? (
+              <>
+                <button type="button" className="btn btn--small btn--ghost" onClick={() => finishRecording(false)}>
+                  Discard
+                </button>
+                <button type="button" className="btn btn--small btn--primary" onClick={() => finishRecording(true)}>
+                  Stop &amp; attach
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="btn btn--small btn--ghost" onClick={cancelCamera}>
+                  Cancel
+                </button>
+                {mode === 'photo' ? (
+                  <button type="button" className="btn btn--small btn--primary" onClick={takePhoto}>
+                    Take photo
+                  </button>
+                ) : (
+                  <button type="button" className="btn btn--small btn--primary" onClick={beginVideoRecording}>
+                    Start recording
+                  </button>
+                )}
+              </>
+            )}
           </div>
         </div>
       ) : (
         <div className="capture__buttons">
-          <button
-            type="button"
-            className="chip"
-            disabled={disabled}
-            onClick={() => fileInputRef.current?.click()}
-          >
+          <button type="button" className="chip" disabled={disabled} onClick={() => fileInputRef.current?.click()}>
             Upload file
           </button>
-          <button
-            type="button"
-            className="chip"
-            disabled={disabled}
-            onClick={() => startRecording('audio')}
-          >
+          <button type="button" className="chip" disabled={disabled} onClick={startAudio}>
             Record audio
           </button>
-          <button
-            type="button"
-            className="chip"
-            disabled={disabled}
-            onClick={() => startRecording('video')}
-          >
+          <button type="button" className="chip" disabled={disabled} onClick={() => openCamera('video')}>
             Record video
+          </button>
+          <button type="button" className="chip" disabled={disabled} onClick={() => openCamera('photo')}>
+            Take photo
           </button>
           <input
             ref={fileInputRef}
@@ -315,9 +389,7 @@ export default function MediaCapture({ items, onChange, maxBytes = 60 * MB, disa
               {it.mediaKind === 'video' && (
                 <video className="staged__video" controls playsInline src={it.url} />
               )}
-              {it.mediaKind === 'image' && (
-                <img className="staged__image" alt={it.fileName} src={it.url} />
-              )}
+              {it.mediaKind === 'image' && <img className="staged__image" alt={it.fileName} src={it.url} />}
               <div className="staged__meta">
                 <span className="staged__name">{it.fileName}</span>
                 <span className="staged__size">
@@ -325,11 +397,7 @@ export default function MediaCapture({ items, onChange, maxBytes = 60 * MB, disa
                   {it.durationSecs ? ` · ${clock(it.durationSecs)}` : ''}
                 </span>
               </div>
-              <button
-                type="button"
-                className="linkbtn linkbtn--danger"
-                onClick={() => removeItem(it.key)}
-              >
+              <button type="button" className="linkbtn linkbtn--danger" onClick={() => removeItem(it.key)}>
                 Remove
               </button>
             </li>
