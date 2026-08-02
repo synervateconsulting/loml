@@ -8,6 +8,12 @@ export const SHARE_KINDS = ['question', 'memory', 'note', 'song', 'reveal', 'thi
 // Kinds built on the binary-pick grid.
 export const PICK_KINDS = ['this_that', 'predict', 'wyr'];
 
+// Kinds a user can start from the free "+ Share" composer. Everything else
+// (reveal/Together and the game kinds) is launched from its own flow — the
+// prompt decks and the Games tab — with the kind locked, so it never appears
+// in the +Share picker.
+export const COMPOSE_KINDS = ['question', 'memory', 'note', 'song'];
+
 const LABELS = {
   question: 'Question',
   memory: 'Memory',

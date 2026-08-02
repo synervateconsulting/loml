@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
-import { SHARE_KINDS, PICK_KINDS, kindOf, isQuestion, isReveal, isSong, isThisThat, isPickGame, isGuess, kindLabel } from '../shares.js';
+import { COMPOSE_KINDS, PICK_KINDS, kindOf, isQuestion, isReveal, isSong, isThisThat, isPickGame, isGuess, kindLabel } from '../shares.js';
 import { ThisThatBuilder, ThisThatView, GuessView, emptyBuilderItems, itemsAreComplete } from './ThisThat.jsx';
 import Confirm, { discardSteps, sendSteps } from './Confirm.jsx';
 import { Attachments } from './Media.jsx';
@@ -295,7 +295,7 @@ export function ShareModal({
           <div className="field">
             <span className="field__label">What kind of share?</span>
             <div className="segmented segmented--wrap" role="group" aria-label="Share type">
-              {SHARE_KINDS.map((k) => (
+              {COMPOSE_KINDS.map((k) => (
                 <button
                   key={k}
                   type="button"
