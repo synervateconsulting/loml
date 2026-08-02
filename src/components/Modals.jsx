@@ -4,7 +4,7 @@ import { COMPOSE_KINDS, PICK_KINDS, kindOf, isQuestion, isReveal, isSong, isThis
 import { ThisThatBuilder, ThisThatView, GuessView, emptyBuilderItems, itemsAreComplete } from './ThisThat.jsx';
 import Confirm, { discardSteps, sendSteps } from './Confirm.jsx';
 import { Attachments } from './Media.jsx';
-import { Reactions } from './Reactions.jsx';
+import { Reactions, CommentThread } from './Reactions.jsx';
 import MediaCapture from './MediaCapture.jsx';
 
 const COMPOSE = {
@@ -404,13 +404,13 @@ export function ShareModal({
 
 /* ------------------------------------------------- respond / acknowledge / answer */
 
-export function RespondModal({ question, meId, onClose, onDone }) {
+export function RespondModal({ question, meId, onClose, onDone, onRefresh }) {
   // Pick games (this_that / predict / wyr) and Guess have their own screens.
   if (isPickGame(question)) {
-    return <ThisThatView question={question} meId={meId} onClose={onClose} onDone={onDone} />;
+    return <ThisThatView question={question} meId={meId} onClose={onClose} onDone={onDone} onRefresh={onRefresh} />;
   }
   if (isGuess(question)) {
-    return <GuessView question={question} meId={meId} onClose={onClose} onDone={onDone} />;
+    return <GuessView question={question} meId={meId} onClose={onClose} onDone={onDone} onRefresh={onRefresh} />;
   }
   const reveal = isReveal(question);
   const copy = respondCopy(question);
@@ -668,7 +668,7 @@ export function EditQuestionModal({ question, onClose, onDone }) {
 
 /* ---------------------------------------- reveal: view / waiting (no editing) */
 
-function RevealView({ question, meId, onClose }) {
+function RevealView({ question, meId, onClose, onRefresh }) {
   const r = question.reveal || {};
   const iAmAsker = question.askerId === meId;
   const mineName = 'You';
@@ -717,6 +717,15 @@ function RevealView({ question, meId, onClose }) {
               canReact
             />
           </div>
+          <CommentThread
+            comments={question.comments || []}
+            meId={meId}
+            onSubmit={async (body) => {
+              const c = await api.commentShare(question.id, body);
+              onRefresh?.();
+              return c;
+            }}
+          />
         </>
       ) : (
         <>
@@ -750,17 +759,17 @@ function KeepsakeStar({ question, onKeep }) {
 
 /* ------------------------------------------------ view a settled share */
 
-export function ViewModal({ question, canEditAnswer, meId, onClose, onDone }) {
+export function ViewModal({ question, canEditAnswer, meId, onClose, onDone, onRefresh }) {
   // Reveal prompts get their own view (blind pairs, no editable reply).
   if (isReveal(question)) {
-    return <RevealView question={question} meId={meId} onClose={onClose} />;
+    return <RevealView question={question} meId={meId} onClose={onClose} onRefresh={onRefresh} />;
   }
   if (isGuess(question)) {
-    return <GuessView question={question} meId={meId} onClose={onClose} onDone={onDone} />;
+    return <GuessView question={question} meId={meId} onClose={onClose} onDone={onDone} onRefresh={onRefresh} />;
   }
   // Pick games get the stacked-results view.
   if (isPickGame(question)) {
-    return <ThisThatView question={question} meId={meId} onClose={onClose} onDone={onDone} />;
+    return <ThisThatView question={question} meId={meId} onClose={onClose} onDone={onDone} onRefresh={onRefresh} />;
   }
 
   const original = question.response?.body ?? '';

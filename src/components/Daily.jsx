@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { Modal } from './Modals.jsx';
+import { Reactions, CommentThread } from './Reactions.jsx';
 
 const dayLabel = (day, today) => {
   const [y, m, d] = day.split('-').map(Number);
@@ -14,9 +15,10 @@ const dayLabel = (day, today) => {
 
 // The "Today's ?" archive tab under Games: every day back to your first answer,
 // most recent first. Tap a row to see the answers / who answered.
-export function DailyHistory() {
+export function DailyHistory({ meId }) {
   const [data, setData] = useState(null);
   const [open, setOpen] = useState(null);
+  const refresh = () => api.dailyHistory().then(setData).catch(() => {});
   useEffect(() => {
     api.dailyHistory().then(setData).catch(() => setData({ days: [], partnerName: 'them' }));
   }, []);
@@ -50,6 +52,27 @@ export function DailyHistory() {
                   <p className="hint">Answer today’s question to reveal {partnerName}’s.</p>
                 )}
                 {state === 'them' && <p className="hint">You didn’t answer that day.</p>}
+                {state === 'both' && (
+                  <>
+                    <Reactions
+                      targetKind="daily"
+                      targetId={d.day}
+                      reactions={d.reactions || []}
+                      meId={meId}
+                      canReact
+                      onReact={(emoji) => api.dailyReact(d.day, emoji)}
+                    />
+                    <CommentThread
+                      comments={d.comments || []}
+                      meId={meId}
+                      onSubmit={async (body) => {
+                        const c = await api.dailyComment(d.day, body);
+                        refresh();
+                        return c;
+                      }}
+                    />
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -84,7 +107,7 @@ export function DailyCard({ daily, onOpen }) {
   );
 }
 
-export function DailyModal({ daily, onClose, onAnswered }) {
+export function DailyModal({ daily, meId, onClose, onAnswered, onRefresh }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -208,6 +231,25 @@ export function DailyModal({ daily, onClose, onAnswered }) {
         <p className="eyebrow">{daily.partnerName}</p>
         <p className="prose prose--answer">{daily.partnerBody || '—'}</p>
       </div>
+
+      <p className="eyebrow">React</p>
+      <Reactions
+        targetKind="daily"
+        targetId={daily.today}
+        reactions={daily.reactions || []}
+        meId={meId}
+        canReact
+        onReact={(emoji) => api.dailyReact(daily.today, emoji)}
+      />
+      <CommentThread
+        comments={daily.comments || []}
+        meId={meId}
+        onSubmit={async (body) => {
+          const c = await api.dailyComment(daily.today, body);
+          onRefresh?.();
+          return c;
+        }}
+      />
 
       {daily.recent?.length > 0 && (
         <>

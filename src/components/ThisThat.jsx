@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { Modal } from './Modals.jsx';
-import { Reactions } from './Reactions.jsx';
+import { Reactions, CommentThread } from './Reactions.jsx';
 import Confirm, { discardSteps, sendSteps } from './Confirm.jsx';
 
 export const MIN_TT_ITEMS = 3;
@@ -94,7 +94,7 @@ const VIEW_COPY = {
 };
 
 // One modal for the lifecycle of a pick game (this_that / wyr / predict).
-export function ThisThatView({ question, meId, onClose, onDone }) {
+export function ThisThatView({ question, meId, onClose, onDone, onRefresh }) {
   const tt = question.thisThat;
   const kind = question.kind === 'wyr' || question.kind === 'predict' ? question.kind : 'this_that';
   const copy = VIEW_COPY[kind];
@@ -255,6 +255,15 @@ export function ThisThatView({ question, meId, onClose, onDone }) {
           <div className="ttview__react">
             <p className="eyebrow">React</p>
             <Reactions targetKind="thisthat" targetId={question.id} reactions={tt.reactions || []} meId={meId} canReact />
+            <CommentThread
+              comments={question.comments || []}
+              meId={meId}
+              onSubmit={async (body) => {
+                const c = await api.commentShare(question.id, body);
+                onRefresh?.();
+                return c;
+              }}
+            />
           </div>
         )}
         {error && <p className="notice notice--error">{error}</p>}
@@ -274,7 +283,7 @@ const VERDICTS = [
   { key: 'missed', label: 'Missed 🙈', pts: 0 },
 ];
 
-export function GuessView({ question, meId, onClose, onDone }) {
+export function GuessView({ question, meId, onClose, onDone, onRefresh }) {
   const g = question.guess || {};
   const iAmAsker = question.askerId === meId;
   const partnerName = iAmAsker ? question.recipientName : question.askerName;
@@ -407,6 +416,15 @@ export function GuessView({ question, meId, onClose, onDone }) {
       <hr className="rule" />
       <p className="eyebrow">React</p>
       <Reactions targetKind="reveal" targetId={question.id} reactions={g.reactions || []} meId={meId} canReact />
+      <CommentThread
+        comments={question.comments || []}
+        meId={meId}
+        onSubmit={async (body) => {
+          const c = await api.commentShare(question.id, body);
+          onRefresh?.();
+          return c;
+        }}
+      />
       {error && <p className="notice notice--error">{error}</p>}
     </Modal>
   );

@@ -264,6 +264,7 @@ router.delete('/share/:id', async (req, res) => {
     await client.query('DELETE FROM thisthat_answer WHERE question_id=$1', [id]);
     await client.query('DELETE FROM thisthat_item WHERE question_id=$1', [id]);
     await client.query('DELETE FROM keepsake WHERE question_id=$1', [id]);
+    await client.query('DELETE FROM question_comment WHERE question_id=$1', [id]);
     await client.query('DELETE FROM game_points WHERE question_id=$1', [id]);
     await client.query('DELETE FROM response_version WHERE response_id = ANY($1::uuid[])', [respIds]);
     await client.query('DELETE FROM response WHERE question_id=$1', [id]);
@@ -291,9 +292,15 @@ router.delete('/daily', async (req, res) => {
   const day = String(req.query.day || '');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return res.status(400).json({ error: 'Bad day.' });
   const userId = req.query.userId ? Number(req.query.userId) : null;
-  const result = userId
-    ? await query('DELETE FROM daily_answer WHERE day = $1::date AND user_id = $2', [day, userId])
-    : await query('DELETE FROM daily_answer WHERE day = $1::date', [day]);
+  let result;
+  if (userId) {
+    result = await query('DELETE FROM daily_answer WHERE day = $1::date AND user_id = $2', [day, userId]);
+  } else {
+    // Whole day: clear its answers and any reactions/comments on it.
+    result = await query('DELETE FROM daily_answer WHERE day = $1::date', [day]);
+    await query('DELETE FROM daily_reaction WHERE day = $1::date', [day]);
+    await query('DELETE FROM daily_comment WHERE day = $1::date', [day]);
+  }
   await logAdmin('delete_daily', day, { userId, deleted: result.rowCount });
   res.json({ ok: true, deleted: result.rowCount });
 });

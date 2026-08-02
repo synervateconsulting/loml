@@ -7,6 +7,7 @@ import { attachUser } from './auth.js';
 import api from './routes.js';
 import adminApi from './admin.js';
 import { startDailyReminders } from './reminders.js';
+import { backfillScores } from './scoring.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.join(__dirname, '..', 'dist');
@@ -38,6 +39,7 @@ app.use((err, _req, res, _next) => {
 const port = process.env.PORT || 3000;
 
 migrate()
+  .then(() => backfillScores().catch((err) => console.error('Scoring backfill failed:', err)))
   .then(() => {
     app.listen(port, '0.0.0.0', () => console.log(`loml listening on ${port}`));
     startDailyReminders();

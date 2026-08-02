@@ -5,7 +5,9 @@ import { REACTION_EMOJI } from '../shares.js';
 // Interactive reaction bar. Optimistic: your pick updates instantly; the server
 // toggles it off if you tap the same one again. When `canReact` is false (it's
 // your own share/reply) the bar is hidden — you just see their reaction.
-export function Reactions({ targetKind, targetId, reactions = [], meId, canReact = true }) {
+// Pass `onReact(emoji)` to override where the reaction is sent (e.g. the daily
+// question, which isn't a question row); otherwise it posts to /reactions.
+export function Reactions({ targetKind, targetId, reactions = [], meId, canReact = true, onReact }) {
   const initialMine = reactions.find((r) => r.userId === meId)?.emoji || null;
   const [mine, setMine] = useState(initialMine);
   const theirs = reactions.filter((r) => r.userId !== meId);
@@ -30,7 +32,8 @@ export function Reactions({ targetKind, targetId, reactions = [], meId, canReact
     const next = mine === emoji ? null : emoji;
     setMine(next);
     try {
-      await api.react(targetKind, targetId, emoji);
+      if (onReact) await onReact(emoji);
+      else await api.react(targetKind, targetId, emoji);
     } catch {
       setMine(initialMine);
     }
@@ -60,6 +63,67 @@ export function Reactions({ targetKind, targetId, reactions = [], meId, canReact
           ))}
         </span>
       )}
+    </div>
+  );
+}
+
+// A little comment thread for a completed game or the daily question. Either
+// partner can add as many as they like; `onSubmit(body)` posts one and resolves
+// with the created comment, which is appended optimistically.
+export function CommentThread({ comments = [], meId, onSubmit }) {
+  const [list, setList] = useState(comments);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const send = async () => {
+    const body = text.trim();
+    if (!body || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const created = await onSubmit(body);
+      if (created) setList((l) => [...l, created]);
+      setText('');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="cthread">
+      <p className="eyebrow">Comments</p>
+      {list.length > 0 && (
+        <ul className="cthread__list">
+          {list.map((c) => (
+            <li key={c.id} className={`cmt ${c.userId === meId ? 'cmt--mine' : ''}`}>
+              <span className="cmt__who">{c.userId === meId ? 'You' : c.userName}</span>
+              <span className="cmt__body">{c.body}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="cthread__compose">
+        <input
+          className="field__input"
+          value={text}
+          maxLength={500}
+          placeholder="Add a comment…"
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
+          }}
+        />
+        <button type="button" className="btn btn--small" disabled={!text.trim() || busy} onClick={send}>
+          Post
+        </button>
+      </div>
+      {error && <p className="notice notice--error">{error}</p>}
     </div>
   );
 }

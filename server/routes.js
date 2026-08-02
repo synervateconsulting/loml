@@ -4,6 +4,7 @@ import { query, keyMatches, logActivity, pool } from './db.js';
 import { startSession, endSession, requireUser, partnerOf } from './auth.js';
 import { publicKey, saveSubscription, notify } from './push.js';
 import { promptForDay, appToday } from './daily.js';
+import { pickPoints, guessPoints, maxPointsFor, SCORE_LEGEND, computeDailyScore, knowingTotal } from './scoring.js';
 
 // Copy for the push banners.
 const newShareTitle = (name, kind) =>
@@ -245,6 +246,22 @@ async function keepersFor(questionIds) {
   return rows;
 }
 
+async function commentsFor(questionIds) {
+  if (!questionIds.length) return [];
+  const { rows } = await query(
+    `SELECT c.id, c.question_id, c.user_id, c.body, c.created_at, u.display_name
+       FROM question_comment c JOIN app_user u ON u.id = c.user_id
+      WHERE c.question_id = ANY($1::uuid[]) ORDER BY c.created_at ASC`,
+    [questionIds]
+  );
+  return rows;
+}
+
+const commentsOn = (comments, id) =>
+  (comments || [])
+    .filter((c) => c.question_id === id)
+    .map((c) => ({ id: c.id, userId: c.user_id, userName: c.display_name, body: c.body, createdAt: c.created_at }));
+
 const reactionsOn = (reactions, kind, id) =>
   reactions.filter((x) => x.target_kind === kind && x.target_id === id).map((x) => ({ userId: x.user_id, emoji: x.emoji }));
 
@@ -369,6 +386,8 @@ function shapeQuestion(row, ctx) {
     recipientId: row.recipient_id,
     recipientName: row.recipient_name,
     reactions: reactionsOn(reactions, 'question', row.id),
+    // Free-form comments — only games carry them (loaded for game ids only).
+    comments: commentsOn(ctx.comments, row.id),
     attachments: qAtt.filter((a) => !a.is_removed),
     removedAttachmentCount: qAtt.filter((a) => a.is_removed).length,
     response: row.response_id
@@ -400,7 +419,9 @@ router.get('/questions', requireUser, async (req, res) => {
   const ttIds = rows.filter((r) => PICK_KINDS.includes(r.kind)).map((r) => r.id);
   const blindIds = rows.filter((r) => r.kind === 'reveal' || r.kind === 'guess').map((r) => r.id);
   const scoredIds = rows.filter((r) => r.kind === 'predict' || r.kind === 'guess').map((r) => r.id);
-  const [attachments, reactions, revealAnswers, thisThatItems, thisThatAnswers, pointsByQ, keepers, partner] = await Promise.all([
+  // Comments live only on games (the blind/pick kinds).
+  const gameIds = [...new Set([...ttIds, ...blindIds])];
+  const [attachments, reactions, revealAnswers, thisThatItems, thisThatAnswers, pointsByQ, keepers, comments, partner] = await Promise.all([
     attachmentsFor(qIds, rIds),
     reactionsFor(qIds, rIds),
     revealAnswersFor(blindIds),
@@ -408,9 +429,10 @@ router.get('/questions', requireUser, async (req, res) => {
     thisThatAnswersFor(ttIds),
     pointsFor(scoredIds),
     keepersFor(qIds),
+    commentsFor(gameIds),
     partnerOf(req.user.id),
   ]);
-  const ctx = { attachments, reactions, revealAnswers, thisThatItems, thisThatAnswers, pointsByQ, keepers, viewerId: req.user.id, partnerId: partner?.id };
+  const ctx = { attachments, reactions, revealAnswers, thisThatItems, thisThatAnswers, pointsByQ, keepers, comments, viewerId: req.user.id, partnerId: partner?.id };
   const shaped = rows.map((r) => shapeQuestion(r, ctx));
   res.json({
     asked: shaped.filter((q) => q.askerId === req.user.id),
@@ -944,7 +966,10 @@ router.post('/questions/:id/thisthat', requireUser, async (req, res) => {
     const revealed = cc.length >= 2 && cc.every((r) => r.n >= n);
     if (revealed) {
       await client.query("UPDATE question SET status = 'answered', updated_at = now() WHERE id = $1", [q.id]);
-      // Predict: award the couple points for each correct guess.
+      // Every pick game feeds the "Knowing You" score. This / That & WYR score a
+      // flat amount for completing together; predict adds a bonus per pick the
+      // partner guessed right. See server/scoring.js.
+      let matches = 0;
       if (q.kind === 'predict') {
         const { rows: mr } = await client.query(
           `SELECT count(*)::int AS matches FROM thisthat_answer a
@@ -952,12 +977,13 @@ router.post('/questions/:id/thisthat', requireUser, async (req, res) => {
             WHERE a.question_id = $1 AND a.user_id = $2 AND b.user_id = $3`,
           [q.id, q.asker_id, q.recipient_id]
         );
-        await client.query(
-          `INSERT INTO game_points (question_id, source, points) VALUES ($1, 'predict', $2)
-           ON CONFLICT (question_id) DO UPDATE SET points = EXCLUDED.points`,
-          [q.id, mr[0].matches]
-        );
+        matches = mr[0].matches;
       }
+      await client.query(
+        `INSERT INTO game_points (question_id, source, points) VALUES ($1, $2, $3)
+         ON CONFLICT (question_id) DO UPDATE SET points = EXCLUDED.points, source = EXCLUDED.source`,
+        [q.id, q.kind, pickPoints(q.kind, matches)]
+      );
     }
     await client.query('COMMIT');
     await logActivity(req.user.id, 'thisthat_answered', 'question', q.id, { revealed, kind: q.kind });
@@ -999,7 +1025,7 @@ router.post('/questions/:id/verdict', requireUser, async (req, res) => {
   );
   if (!guessed.rows[0]) return res.status(409).json({ error: 'They haven’t guessed yet.' });
 
-  const pts = verdict === 'got_it' ? 2 : verdict === 'close' ? 1 : 0;
+  const pts = guessPoints(verdict);
   await query('UPDATE question SET guess_verdict = $1, updated_at = now() WHERE id = $2', [verdict, q.id]);
   await query(
     `INSERT INTO game_points (question_id, source, points) VALUES ($1, 'guess', $2)
@@ -1009,6 +1035,44 @@ router.post('/questions/:id/verdict', requireUser, async (req, res) => {
   await logActivity(req.user.id, 'guess_judged', 'question', q.id, { verdict });
   notify(q.recipient_id, { title: `${req.user.display_name} scored your guess`, body: q.title });
   res.json({ ok: true, verdict, points: pts });
+});
+
+/* ------------------------------------------------------------- game comments */
+
+// A free-form comment on a completed game. Either partner can add one once the
+// game is revealed (status 'answered') — this doesn't touch their locked answer.
+const GAME_KINDS = ['reveal', 'guess', 'this_that', 'predict', 'wyr'];
+
+router.post('/questions/:id/comments', requireUser, async (req, res) => {
+  const body = (req.body?.body || '').trim().slice(0, 500);
+  if (!body) return res.status(400).json({ error: 'Write a comment.' });
+  const { rows } = await query(
+    `SELECT * FROM question WHERE id = $1 AND is_removed = false AND kind = ANY($2::text[])`,
+    [req.params.id, GAME_KINDS]
+  );
+  const q = rows[0];
+  if (!q) return res.status(404).json({ error: 'Not found.' });
+  if (q.asker_id !== req.user.id && q.recipient_id !== req.user.id)
+    return res.status(403).json({ error: "This isn't yours." });
+  if (q.status !== 'answered') return res.status(409).json({ error: 'You can comment once it’s complete.' });
+
+  const ins = await query(
+    'INSERT INTO question_comment (question_id, user_id, body) VALUES ($1, $2, $3) RETURNING id, created_at',
+    [q.id, req.user.id, body]
+  );
+  await logActivity(req.user.id, 'commented', 'question', q.id);
+  const other = q.asker_id === req.user.id ? q.recipient_id : q.asker_id;
+  notify(
+    other,
+    q.is_spicy ? discreetReply(req.user.display_name) : { title: `${req.user.display_name} commented`, body: q.title }
+  );
+  res.status(201).json({
+    id: ins.rows[0].id,
+    userId: req.user.id,
+    userName: req.user.display_name,
+    body,
+    createdAt: ins.rows[0].created_at,
+  });
 });
 
 /* ---------------------------------------------------------------- keepsakes */
@@ -1049,6 +1113,36 @@ router.post('/questions/:id/keepsake', requireUser, async (req, res) => {
 
 const fmtDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
+// A day's daily question is "revealed" (open to reactions/comments) once both
+// partners have answered it.
+async function dailyRevealed(day) {
+  const { rows } = await query(
+    'SELECT count(DISTINCT user_id)::int AS n FROM daily_answer WHERE day = $1::date',
+    [day]
+  );
+  return rows[0].n >= 2;
+}
+
+// Batch-load reactions/comments for a set of 'YYYY-MM-DD' days.
+async function dailyReactionsFor(days) {
+  if (!days.length) return [];
+  const { rows } = await query(
+    "SELECT to_char(day, 'YYYY-MM-DD') AS day, user_id, emoji FROM daily_reaction WHERE day = ANY($1::date[])",
+    [days]
+  );
+  return rows;
+}
+async function dailyCommentsFor(days) {
+  if (!days.length) return [];
+  const { rows } = await query(
+    `SELECT to_char(c.day, 'YYYY-MM-DD') AS day, c.id, c.user_id, c.body, c.created_at, u.display_name
+       FROM daily_comment c JOIN app_user u ON u.id = c.user_id
+      WHERE c.day = ANY($1::date[]) ORDER BY c.created_at ASC`,
+    [days]
+  );
+  return rows;
+}
+
 router.get('/daily', requireUser, async (req, res) => {
   const partner = await partnerOf(req.user.id);
   const today = appToday();
@@ -1084,6 +1178,11 @@ router.get('/daily', requireUser, async (req, res) => {
     .slice(0, 10)
     .map(([d, m]) => ({ day: d, prompt: promptForDay(d), mine: m[req.user.id], theirs: m[partner.id] }));
 
+  // Once revealed, both can react to and comment on today's question.
+  const [reactions, comments] = revealed
+    ? await Promise.all([dailyReactionsFor([today]), dailyCommentsFor([today])])
+    : [[], []];
+
   res.json({
     today,
     prompt,
@@ -1094,6 +1193,10 @@ router.get('/daily', requireUser, async (req, res) => {
     partnerName: partner?.display_name || 'them',
     streak,
     recent,
+    reactions: reactions.filter((r) => r.day === today).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
+    comments: comments
+      .filter((c) => c.day === today)
+      .map((c) => ({ id: c.id, userId: c.user_id, userName: c.display_name, body: c.body, createdAt: c.created_at })),
   });
 });
 
@@ -1114,6 +1217,25 @@ router.get('/daily/history', requireUser, async (req, res) => {
   const answeredDays = [...byDay.keys()].sort();
   const earliest = answeredDays[0] || today;
 
+  // Days where both answered can carry reactions/comments; batch-load them.
+  const revealedDays = [...byDay.entries()]
+    .filter(([, m]) => partner && m[req.user.id] !== undefined && m[partner.id] !== undefined)
+    .map(([d]) => d);
+  const [dReacts, dComments] = await Promise.all([
+    dailyReactionsFor(revealedDays),
+    dailyCommentsFor(revealedDays),
+  ]);
+  const reactsByDay = new Map();
+  for (const r of dReacts) {
+    if (!reactsByDay.has(r.day)) reactsByDay.set(r.day, []);
+    reactsByDay.get(r.day).push({ userId: r.user_id, emoji: r.emoji });
+  }
+  const commentsByDay = new Map();
+  for (const c of dComments) {
+    if (!commentsByDay.has(c.day)) commentsByDay.set(c.day, []);
+    commentsByDay.get(c.day).push({ id: c.id, userId: c.user_id, userName: c.display_name, body: c.body, createdAt: c.created_at });
+  }
+
   const days = [];
   const cur = new Date(`${today}T00:00:00`);
   const stop = new Date(`${earliest}T00:00:00`);
@@ -1129,6 +1251,7 @@ router.get('/daily/history', requireUser, async (req, res) => {
     const partnerAnswered = theirs !== undefined;
     // Blind only guards TODAY; past days are shown in full.
     const showTheirs = day !== today || (iAnswered && partnerAnswered);
+    const revealed = iAnswered && partnerAnswered;
     days.push({
       day,
       prompt: promptForDay(day),
@@ -1136,6 +1259,8 @@ router.get('/daily/history', requireUser, async (req, res) => {
       partnerAnswered,
       mine: mine ?? null,
       theirs: showTheirs ? theirs ?? null : null,
+      reactions: revealed ? reactsByDay.get(day) || [] : [],
+      comments: revealed ? commentsByDay.get(day) || [] : [],
     });
     cur.setDate(cur.getDate() - 1);
   }
@@ -1182,13 +1307,108 @@ router.patch('/daily', requireUser, async (req, res) => {
   res.json({ ok: true });
 });
 
+// React to a day's revealed daily question (toggles, like share reactions).
+router.post('/daily/react', requireUser, async (req, res) => {
+  const day = String(req.body?.day || '');
+  const emoji = req.body?.emoji;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return res.status(400).json({ error: 'Bad day.' });
+  if (!(await dailyRevealed(day))) return res.status(409).json({ error: 'Not revealed yet.' });
+
+  const existing = await query('SELECT emoji FROM daily_reaction WHERE day = $1::date AND user_id = $2', [day, req.user.id]);
+  if (existing.rows[0]?.emoji === emoji) {
+    await query('DELETE FROM daily_reaction WHERE day = $1::date AND user_id = $2', [day, req.user.id]);
+    return res.json({ ok: true, emoji: null });
+  }
+  if (!REACTION_EMOJI.includes(emoji)) return res.status(400).json({ error: 'Unknown reaction.' });
+  await query(
+    `INSERT INTO daily_reaction (day, user_id, emoji) VALUES ($1::date, $2, $3)
+     ON CONFLICT (day, user_id) DO UPDATE SET emoji = EXCLUDED.emoji, created_at = now()`,
+    [day, req.user.id, emoji]
+  );
+  res.json({ ok: true, emoji });
+});
+
+// Comment on a day's revealed daily question. Free-form, unlimited.
+router.post('/daily/comment', requireUser, async (req, res) => {
+  const day = String(req.body?.day || '');
+  const body = (req.body?.body || '').trim().slice(0, 500);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return res.status(400).json({ error: 'Bad day.' });
+  if (!body) return res.status(400).json({ error: 'Write a comment.' });
+  if (!(await dailyRevealed(day))) return res.status(409).json({ error: 'Not revealed yet.' });
+
+  const ins = await query(
+    'INSERT INTO daily_comment (day, user_id, body) VALUES ($1::date, $2, $3) RETURNING id, created_at',
+    [day, req.user.id, body]
+  );
+  const partner = await partnerOf(req.user.id);
+  if (partner) notify(partner.id, { title: `${req.user.display_name} commented on today’s question`, body });
+  res.status(201).json({
+    id: ins.rows[0].id,
+    userId: req.user.id,
+    userName: req.user.display_name,
+    body,
+    createdAt: ins.rows[0].created_at,
+  });
+});
+
 // Played keys + the shared "Knowing You" points total.
 router.get('/games/used', requireUser, async (_req, res) => {
-  const [used, pts] = await Promise.all([
-    query('SELECT game_key FROM game_used'),
-    query('SELECT COALESCE(SUM(points), 0)::int AS total FROM game_points'),
+  const [used, total] = await Promise.all([query('SELECT game_key FROM game_used'), knowingTotal()]);
+  res.json({ keys: used.rows.map((r) => r.game_key), knowingPoints: total });
+});
+
+// A breakdown of the "Knowing You" score: every game that actually earned
+// points (with how many and why), plus games still in flight that will score
+// once they're finished. This is what the brain-icon window reads so a person
+// can see exactly what the number is — and isn't — counting.
+router.get('/games/score', requireUser, async (_req, res) => {
+  // Scored games: each game_points row, joined to its share for a title and,
+  // for predict, the number of items (the most it could have scored).
+  const { rows: scored } = await query(
+    `SELECT gp.question_id, gp.source, gp.points, gp.created_at,
+            q.title, q.kind, q.is_spicy, q.is_removed, q.guess_verdict,
+            (SELECT count(*)::int FROM thisthat_item ti WHERE ti.question_id = gp.question_id) AS item_count
+       FROM game_points gp
+       JOIN question q ON q.id = gp.question_id
+      ORDER BY gp.created_at DESC`
+  );
+
+  const entries = scored.map((r) => ({
+    questionId: r.question_id,
+    source: r.source, // 'this_that' | 'predict' | 'wyr' | 'guess'
+    points: r.points,
+    maxPoints: maxPointsFor(r.kind, r.item_count || 0),
+    title: r.title,
+    kind: r.kind,
+    isSpicy: r.is_spicy,
+    isRemoved: r.is_removed,
+    verdict: r.guess_verdict || null,
+    createdAt: r.created_at,
+  }));
+
+  // In flight: games that can still score but haven't yet. A predict share is
+  // scored only once both people have answered (status flips to 'answered'); a
+  // guess is scored only once the author judges it.
+  const [predictOpen, guessUnjudged, daily] = await Promise.all([
+    query(
+      "SELECT count(*)::int AS n FROM question WHERE kind = 'predict' AND is_removed = false AND status <> 'answered'"
+    ),
+    query(
+      `SELECT count(*)::int AS n FROM question q
+        WHERE q.kind = 'guess' AND q.is_removed = false AND q.guess_verdict IS NULL
+          AND EXISTS (SELECT 1 FROM reveal_answer ra WHERE ra.question_id = q.id AND ra.user_id = q.recipient_id)`
+    ),
+    computeDailyScore(),
   ]);
-  res.json({ keys: used.rows.map((r) => r.game_key), knowingPoints: pts.rows[0].total });
+
+  const gamesTotal = entries.reduce((sum, e) => sum + e.points, 0);
+  res.json({
+    total: gamesTotal + daily.points,
+    entries,
+    daily,
+    legend: SCORE_LEGEND,
+    pending: { predictAwaitingReveal: predictOpen.rows[0].n, guessAwaitingVerdict: guessUnjudged.rows[0].n },
+  });
 });
 
 /* ---------------------------------------------------------------- reactions */
