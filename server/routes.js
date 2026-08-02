@@ -4,7 +4,7 @@ import { query, keyMatches, logActivity, pool } from './db.js';
 import { startSession, endSession, requireUser, partnerOf } from './auth.js';
 import { publicKey, saveSubscription, notify } from './push.js';
 import { promptForDay, appToday } from './daily.js';
-import { pickPoints, guessPoints, maxPointsFor, SCORE_LEGEND, computeDailyScore, knowingTotal } from './scoring.js';
+import { pickPoints, guessPoints, revealPoints, maxPointsFor, SCORE_LEGEND, computeDailyScore, knowingTotal } from './scoring.js';
 
 // Copy for the push banners.
 const newShareTitle = (name, kind) =>
@@ -891,10 +891,19 @@ router.post('/questions/:id/reveal', requireUser, async (req, res) => {
       [q.id]
     );
     const revealed = c[0].n >= 2;
-    if (revealed)
+    if (revealed) {
       await client.query("UPDATE question SET status = 'answered', updated_at = now() WHERE id = $1", [
         q.id,
       ]);
+      // A completed deck / answer-together share earns a flat medium score (no
+      // right/wrong). Guesses are scored later at verdict, not here.
+      if (q.kind === 'reveal')
+        await client.query(
+          `INSERT INTO game_points (question_id, source, points) VALUES ($1, 'reveal', $2)
+           ON CONFLICT (question_id) DO UPDATE SET points = EXCLUDED.points, source = EXCLUDED.source`,
+          [q.id, revealPoints()]
+        );
+    }
     await client.query('COMMIT');
     await logActivity(req.user.id, 'reveal_answered', 'question', q.id, { revealed });
     const other = q.asker_id === req.user.id ? q.recipient_id : q.asker_id;
@@ -1388,8 +1397,9 @@ router.get('/games/score', requireUser, async (_req, res) => {
 
   // In flight: games that can still score but haven't yet. A predict share is
   // scored only once both people have answered (status flips to 'answered'); a
-  // guess is scored only once the author judges it.
-  const [predictOpen, guessUnjudged, daily] = await Promise.all([
+  // guess is scored only once the author judges it; a deck scores once both
+  // have answered it.
+  const [predictOpen, guessUnjudged, revealOpen, daily] = await Promise.all([
     query(
       "SELECT count(*)::int AS n FROM question WHERE kind = 'predict' AND is_removed = false AND status <> 'answered'"
     ),
@@ -1397,6 +1407,9 @@ router.get('/games/score', requireUser, async (_req, res) => {
       `SELECT count(*)::int AS n FROM question q
         WHERE q.kind = 'guess' AND q.is_removed = false AND q.guess_verdict IS NULL
           AND EXISTS (SELECT 1 FROM reveal_answer ra WHERE ra.question_id = q.id AND ra.user_id = q.recipient_id)`
+    ),
+    query(
+      "SELECT count(*)::int AS n FROM question WHERE kind = 'reveal' AND is_removed = false AND status <> 'answered'"
     ),
     computeDailyScore(),
   ]);
@@ -1407,7 +1420,11 @@ router.get('/games/score', requireUser, async (_req, res) => {
     entries,
     daily,
     legend: SCORE_LEGEND,
-    pending: { predictAwaitingReveal: predictOpen.rows[0].n, guessAwaitingVerdict: guessUnjudged.rows[0].n },
+    pending: {
+      predictAwaitingReveal: predictOpen.rows[0].n,
+      guessAwaitingVerdict: guessUnjudged.rows[0].n,
+      deckAwaitingReveal: revealOpen.rows[0].n,
+    },
   });
 });
 

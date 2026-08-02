@@ -916,9 +916,9 @@ body::before {
 }
 .games__head .calpanes {
   margin-bottom: 16px;
+  flex: 1 1 100%; /* fill the row so the score button's auto margin can reach the far right */
 }
 .knowmeter {
-  margin-bottom: 16px;
   font-size: 13px;
   color: var(--muted);
   white-space: nowrap;
@@ -928,6 +928,9 @@ body::before {
   font-variant-numeric: tabular-nums;
 }
 .knowmeter--btn {
+  /* Last item in the nav row — auto left margin pins it to the far right,
+     whatever wrapped row it lands on. */
+  margin-left: auto;
   border: 1px solid var(--edge);
   border-radius: 999px;
   background: var(--card);
@@ -1952,6 +1955,9 @@ body::before {
   background: var(--cream);
   border-color: var(--cream);
   font-weight: 600;
+}
+.topnav__emoji {
+  margin-right: 5px;
 }
 
 /* action bar: nav pills (wrap to 2 rows) on the left + square Share on right */

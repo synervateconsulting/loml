@@ -12,6 +12,7 @@ const SOURCE_META = {
   guess: { icon: '💬', label: 'Guess My Answer' },
   this_that: { icon: '⚖️', label: 'This / That' },
   wyr: { icon: '🤔', label: 'Would You Rather' },
+  reveal: { icon: '🃏', label: 'Decks' },
   daily: { icon: '📅', label: 'Daily question' },
 };
 const VERDICT_LABEL = { got_it: 'Got it', close: 'Close', missed: 'Missed' };
@@ -32,19 +33,21 @@ export default function GamesView({
   const [scoreOpen, setScoreOpen] = useState(false);
   const used = new Set(usedGames);
 
+  // Emojis mirror the score breakdown's per-game icons (SOURCE_META). The
+  // Guessing tab holds both Predict (🔮) and Guess (💬), so it shows both.
   const tabs = [
-    ['decks', 'Decks'],
-    ['thisthat', 'This / That'],
-    ['wyr', 'Would You Rather'],
-    ['guessing', 'Guessing'],
-    ['today', 'Today’s ?'],
+    ['decks', 'Decks', '🃏'],
+    ['thisthat', 'This / That', '⚖️'],
+    ['wyr', 'Would You Rather', '🤔'],
+    ['guessing', 'Guessing', '🔮💬'],
+    ['today', 'Today’s ?', '📅'],
   ];
 
   return (
     <div className="games">
       <div className="games__head">
         <div className="calpanes" role="group" aria-label="Games">
-          {tabs.map(([key, label]) => (
+          {tabs.map(([key, label, emoji]) => (
             <button
               key={key}
               type="button"
@@ -52,18 +55,20 @@ export default function GamesView({
               aria-pressed={pane === key}
               onClick={() => setPane(key)}
             >
+              <span className="topnav__emoji" aria-hidden="true">{emoji}</span>
               {label}
             </button>
           ))}
+          {/* Score sits in the nav flow — always last, pushed fully right. */}
+          <button
+            type="button"
+            className="knowmeter knowmeter--btn"
+            onClick={() => setScoreOpen(true)}
+            title="See how your score is calculated"
+          >
+            🧠 <b>{knowingPoints}</b>
+          </button>
         </div>
-        <button
-          type="button"
-          className="knowmeter knowmeter--btn"
-          onClick={() => setScoreOpen(true)}
-          title="See how your score is calculated"
-        >
-          🧠 <b>{knowingPoints}</b>
-        </button>
       </div>
 
       {scoreOpen && <ScoreBreakdown onClose={() => setScoreOpen(false)} />}
@@ -245,6 +250,8 @@ function ScoreBreakdown({ onClose }) {
     pendingNotes.push(`${pending.predictAwaitingReveal} Predict game${pending.predictAwaitingReveal > 1 ? 's' : ''} will score once you both answer.`);
   if (pending.guessAwaitingVerdict)
     pendingNotes.push(`${pending.guessAwaitingVerdict} Guess game${pending.guessAwaitingVerdict > 1 ? 's' : ''} will score once it's judged.`);
+  if (pending.deckAwaitingReveal)
+    pendingNotes.push(`${pending.deckAwaitingReveal} Deck prompt${pending.deckAwaitingReveal > 1 ? 's' : ''} will score once you both answer.`);
 
   return (
     <Modal
@@ -344,7 +351,8 @@ function ScoreBreakdown({ onClose }) {
           )}
 
           <p className="scorefoot">
-            Prompt Decks and Together shares are just for connecting — they don’t add to this score.
+            Regular shares — questions, memories, notes and songs — are just for connecting, so they don’t add to this
+            score.
           </p>
         </>
       )}
