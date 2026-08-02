@@ -1639,78 +1639,166 @@ router.get('/nudges', requireUser, async (req, res) => {
 
 /* -------------------------------------------------------------- shared lists */
 
+const LIST_TYPES = ['activities', 'couple_goals', 'to_do', 'other'];
+const listType = (t) => (LIST_TYPES.includes(t) ? t : 'other');
+
 router.get('/lists', requireUser, async (_req, res) => {
   const lists = await query(
-    'SELECT id, title, created_by, created_at FROM list WHERE is_removed = false ORDER BY created_at'
+    `SELECT id, title, list_type, created_by, created_at, last_edited_by, last_edited_at
+       FROM list WHERE is_removed = false ORDER BY created_at`
   );
   const items = await query(
-    `SELECT id, list_id, text, created_by, checked_by, checked_at
+    `SELECT id, list_id, text, created_by, is_done, state_by, state_at
        FROM list_item WHERE is_removed = false ORDER BY created_at`
   );
   res.json(
     lists.rows.map((l) => ({
       id: l.id,
       title: l.title,
+      type: l.list_type,
       createdBy: l.created_by,
       createdAt: l.created_at,
+      lastEditedBy: l.last_edited_by,
+      lastEditedAt: l.last_edited_at,
       items: items.rows
         .filter((i) => i.list_id === l.id)
         .map((i) => ({
           id: i.id,
           text: i.text,
-          createdBy: i.created_by,
-          checkedBy: i.checked_by,
-          checkedAt: i.checked_at,
+          ownerId: i.created_by, // who added / last edited it
+          isDone: i.is_done,
+          stateBy: i.state_by, // who last toggled it
+          stateAt: i.state_at,
         })),
     }))
   );
 });
 
+// Create a list with a name, a type, and any number of items.
 router.post('/lists', requireUser, async (req, res) => {
-  const title = (req.body?.title || '').trim();
+  const title = (req.body?.title || '').trim().slice(0, 120);
   if (!title) return res.status(400).json({ error: 'Name the list.' });
-  const { rows } = await query('INSERT INTO list (title, created_by) VALUES ($1, $2) RETURNING id', [
-    title,
-    req.user.id,
-  ]);
-  await logActivity(req.user.id, 'made_list', 'list', rows[0].id, { title });
-  res.status(201).json({ id: rows[0].id });
+  const type = listType(req.body?.type);
+  const texts = (Array.isArray(req.body?.items) ? req.body.items : [])
+    .map((t) => String(t || '').trim().slice(0, 200))
+    .filter(Boolean)
+    .slice(0, 200);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      'INSERT INTO list (title, list_type, created_by) VALUES ($1, $2, $3) RETURNING id',
+      [title, type, req.user.id]
+    );
+    const listId = rows[0].id;
+    for (const text of texts)
+      await client.query('INSERT INTO list_item (list_id, text, created_by) VALUES ($1, $2, $3)', [
+        listId,
+        text,
+        req.user.id,
+      ]);
+    await client.query('COMMIT');
+    await logActivity(req.user.id, 'made_list', 'list', listId, { title, type, items: texts.length });
+    res.status(201).json({ id: listId });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 });
 
-router.post('/lists/:id/items', requireUser, async (req, res) => {
-  const text = (req.body?.text || '').trim();
-  if (!text) return res.status(400).json({ error: 'Add some text.' });
-  const l = await query('SELECT id FROM list WHERE id = $1 AND is_removed = false', [req.params.id]);
-  if (!l.rows[0]) return res.status(404).json({ error: 'List not found.' });
-  const { rows } = await query(
-    'INSERT INTO list_item (list_id, text, created_by) VALUES ($1, $2, $3) RETURNING id',
-    [req.params.id, text, req.user.id]
-  );
-  res.status(201).json({ id: rows[0].id });
+// Save edits to a list: title, type, and its items (add / edit / soft-remove).
+// Editing an item's text transfers its ownership to whoever edited it. Changes
+// are logged per-item (activity_log) and the list's last-edited stamp is set.
+router.patch('/lists/:id', requireUser, async (req, res) => {
+  const id = req.params.id;
+  const cur = await query('SELECT id, title, list_type FROM list WHERE id = $1 AND is_removed = false', [id]);
+  if (!cur.rows[0]) return res.status(404).json({ error: 'List not found.' });
+  const title = (req.body?.title || '').trim().slice(0, 120);
+  if (!title) return res.status(400).json({ error: 'Name the list.' });
+  const type = listType(req.body?.type ?? cur.rows[0].list_type);
+  const incoming = Array.isArray(req.body?.items) ? req.body.items : [];
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    let changed = false;
+
+    if (title !== cur.rows[0].title || type !== cur.rows[0].list_type) {
+      await client.query('UPDATE list SET title = $1, list_type = $2 WHERE id = $3', [title, type, id]);
+      await logActivity(req.user.id, 'edited_list', 'list', id, { title, type });
+      changed = true;
+    }
+
+    const existing = await client.query(
+      'SELECT id, text FROM list_item WHERE list_id = $1 AND is_removed = false',
+      [id]
+    );
+    const byId = new Map(existing.rows.map((r) => [r.id, r]));
+    for (const raw of incoming) {
+      const text = String(raw?.text || '').trim().slice(0, 200);
+      if (raw?.id && byId.has(raw.id)) {
+        if (raw.removed) {
+          await client.query('UPDATE list_item SET is_removed = true WHERE id = $1', [raw.id]);
+          await logActivity(req.user.id, 'removed_list_item', 'list', id, { itemId: raw.id });
+          changed = true;
+        } else if (text && text !== byId.get(raw.id).text) {
+          // Editing counts as (re)adding: ownership moves to the editor.
+          await client.query('UPDATE list_item SET text = $1, created_by = $2 WHERE id = $3', [
+            text,
+            req.user.id,
+            raw.id,
+          ]);
+          await logActivity(req.user.id, 'edited_list_item', 'list', id, { itemId: raw.id });
+          changed = true;
+        }
+      } else if (!raw?.id && !raw?.removed && text) {
+        await client.query('INSERT INTO list_item (list_id, text, created_by) VALUES ($1, $2, $3)', [
+          id,
+          text,
+          req.user.id,
+        ]);
+        await logActivity(req.user.id, 'added_list_item', 'list', id);
+        changed = true;
+      }
+    }
+
+    if (changed)
+      await client.query('UPDATE list SET last_edited_by = $1, last_edited_at = now() WHERE id = $2', [
+        req.user.id,
+        id,
+      ]);
+    await client.query('COMMIT');
+    res.json({ ok: true, changed });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 });
 
+// Toggle an item's done state. Records who changed it and when (kept even when
+// marked back to not-done). Ownership is unaffected — only edits change that.
 router.post('/list-items/:id/toggle', requireUser, async (req, res) => {
-  const { rows } = await query('SELECT checked_by FROM list_item WHERE id = $1 AND is_removed = false', [
+  const { rows } = await query('SELECT is_done FROM list_item WHERE id = $1 AND is_removed = false', [
     req.params.id,
   ]);
   if (!rows[0]) return res.status(404).json({ error: 'Item not found.' });
-  if (rows[0].checked_by)
-    await query('UPDATE list_item SET checked_by = NULL, checked_at = NULL WHERE id = $1', [req.params.id]);
-  else
-    await query('UPDATE list_item SET checked_by = $1, checked_at = now() WHERE id = $2', [
-      req.user.id,
-      req.params.id,
-    ]);
-  res.json({ ok: true });
+  const next = !rows[0].is_done;
+  await query('UPDATE list_item SET is_done = $1, state_by = $2, state_at = now() WHERE id = $3', [
+    next,
+    req.user.id,
+    req.params.id,
+  ]);
+  res.json({ ok: true, isDone: next });
 });
 
+// Soft-delete a whole list (all deletes in loml are soft).
 router.post('/lists/:id/remove', requireUser, async (req, res) => {
   await query('UPDATE list SET is_removed = true WHERE id = $1', [req.params.id]);
-  res.json({ ok: true });
-});
-
-router.post('/list-items/:id/remove', requireUser, async (req, res) => {
-  await query('UPDATE list_item SET is_removed = true WHERE id = $1', [req.params.id]);
+  await logActivity(req.user.id, 'removed_list', 'list', req.params.id);
   res.json({ ok: true });
 });
 
