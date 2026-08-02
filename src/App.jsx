@@ -514,7 +514,7 @@ export default function App() {
           </>
         )}
 
-        {view === 'lists' && <ListsView users={listUsers} />}
+        {view === 'lists' && <ListsView meId={me.id} users={listUsers} />}
 
         {view === 'games' && (
           <GamesView

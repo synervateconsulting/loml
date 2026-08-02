@@ -70,6 +70,7 @@ export const api = {
   updateList: (id, fields) => request('PATCH', `/lists/${id}`, fields),
   toggleListItem: (id) => request('POST', `/list-items/${id}/toggle`),
   removeList: (id) => request('POST', `/lists/${id}/remove`),
+  commentList: (id, body) => request('POST', `/lists/${id}/comments`, { body }),
   removeAttachment: (id) => request('POST', `/attachments/${id}/remove`),
   history: (questionId) => request('GET', `/questions/${questionId}/history`),
   calendar: () => request('GET', '/calendar'),

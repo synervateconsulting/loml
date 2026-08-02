@@ -1458,7 +1458,7 @@ const REACTION_EMOJI = ['❤️', '🔥', '😈', '😂', '🥹', '👀'];
 
 router.post('/reactions', requireUser, async (req, res) => {
   const { targetKind, targetId, emoji } = req.body || {};
-  if (!['question', 'response', 'reveal', 'event', 'thisthat'].includes(targetKind))
+  if (!['question', 'response', 'reveal', 'event', 'thisthat', 'list'].includes(targetKind))
     return res.status(400).json({ error: 'Bad target.' });
 
   // Confirm the target is part of a share you're in, and figure out whether
@@ -1475,6 +1475,10 @@ router.post('/reactions', requireUser, async (req, res) => {
       member = true;
       eventTitle = rows[0].title;
     }
+  } else if (targetKind === 'list') {
+    // Lists are shared; reacting to a list you're in (either partner) is fine.
+    const { rows } = await query('SELECT id FROM list WHERE id = $1 AND is_removed = false', [targetId]);
+    if (rows[0]) member = true;
   } else if (targetKind === 'question') {
     const { rows } = await query('SELECT asker_id, recipient_id FROM question WHERE id = $1', [targetId]);
     const q = rows[0];
@@ -1651,6 +1655,19 @@ router.get('/lists', requireUser, async (_req, res) => {
     `SELECT id, list_id, text, created_by, is_done, state_by, state_at
        FROM list_item WHERE is_removed = false ORDER BY created_at`
   );
+  const listIds = lists.rows.map((l) => l.id);
+  // Reactions + comments on the list as a whole (not the items).
+  const reactions = listIds.length
+    ? (await query("SELECT target_id, user_id, emoji FROM reaction WHERE target_kind = 'list' AND target_id = ANY($1::uuid[])", [listIds])).rows
+    : [];
+  const comments = listIds.length
+    ? (await query(
+        `SELECT c.list_id, c.id, c.user_id, c.body, c.created_at, u.display_name
+           FROM list_comment c JOIN app_user u ON u.id = c.user_id
+          WHERE c.list_id = ANY($1::uuid[]) ORDER BY c.created_at ASC`,
+        [listIds]
+      )).rows
+    : [];
   res.json(
     lists.rows.map((l) => ({
       id: l.id,
@@ -1670,6 +1687,10 @@ router.get('/lists', requireUser, async (_req, res) => {
           stateBy: i.state_by, // who last toggled it
           stateAt: i.state_at,
         })),
+      reactions: reactions.filter((r) => r.target_id === l.id).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
+      comments: comments
+        .filter((c) => c.list_id === l.id)
+        .map((c) => ({ id: c.id, userId: c.user_id, userName: c.display_name, body: c.body, createdAt: c.created_at })),
     }))
   );
 });
@@ -1800,6 +1821,27 @@ router.post('/lists/:id/remove', requireUser, async (req, res) => {
   await query('UPDATE list SET is_removed = true WHERE id = $1', [req.params.id]);
   await logActivity(req.user.id, 'removed_list', 'list', req.params.id);
   res.json({ ok: true });
+});
+
+// Comment on a whole list. Free-form, unlimited, either partner.
+router.post('/lists/:id/comments', requireUser, async (req, res) => {
+  const body = (req.body?.body || '').trim().slice(0, 500);
+  if (!body) return res.status(400).json({ error: 'Write a comment.' });
+  const l = await query('SELECT id, title FROM list WHERE id = $1 AND is_removed = false', [req.params.id]);
+  if (!l.rows[0]) return res.status(404).json({ error: 'List not found.' });
+  const ins = await query(
+    'INSERT INTO list_comment (list_id, user_id, body) VALUES ($1, $2, $3) RETURNING id, created_at',
+    [req.params.id, req.user.id, body]
+  );
+  const partner = await partnerOf(req.user.id);
+  if (partner) notify(partner.id, { title: `${req.user.display_name} commented on “${l.rows[0].title}”`, body });
+  res.status(201).json({
+    id: ins.rows[0].id,
+    userId: req.user.id,
+    userName: req.user.display_name,
+    body,
+    createdAt: ins.rows[0].created_at,
+  });
 });
 
 /* -------------------------------------------------------------- calendar */
