@@ -1165,6 +1165,23 @@ router.post('/daily', requireUser, async (req, res) => {
   res.status(201).json({ ok: true, revealed });
 });
 
+// Edit today's answer — allowed only while it's still blind (partner hasn't
+// answered yet). Once both are in, it's locked.
+router.patch('/daily', requireUser, async (req, res) => {
+  const body = (req.body?.body || '').trim();
+  if (!body) return res.status(400).json({ error: 'Write your answer.' });
+  const today = appToday();
+  const mine = await query('SELECT 1 FROM daily_answer WHERE day = $1::date AND user_id = $2', [today, req.user.id]);
+  if (!mine.rows[0]) return res.status(404).json({ error: 'You haven’t answered today yet.' });
+  const partner = await partnerOf(req.user.id);
+  const theirs = partner
+    ? await query('SELECT 1 FROM daily_answer WHERE day = $1::date AND user_id = $2', [today, partner.id])
+    : { rows: [] };
+  if (theirs.rows[0]) return res.status(409).json({ error: 'It’s already revealed — no more edits.' });
+  await query('UPDATE daily_answer SET body = $1 WHERE day = $2::date AND user_id = $3', [body, today, req.user.id]);
+  res.json({ ok: true });
+});
+
 // Played keys + the shared "Knowing You" points total.
 router.get('/games/used', requireUser, async (_req, res) => {
   const [used, pts] = await Promise.all([
