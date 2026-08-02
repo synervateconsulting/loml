@@ -82,6 +82,11 @@ export const api = {
   removeEvent: (id) => request('POST', `/calendar/events/${id}/remove`),
   commentEvent: (id, body) => request('POST', `/calendar/events/${id}/comments`, { body }),
   editEventComment: (id, body) => request('PATCH', `/calendar/comments/${id}`, { body }),
+  // Date requests
+  createDateRequest: (fields) => request('POST', '/date-requests', fields),
+  acceptDateRequest: (id, fields) => request('POST', `/date-requests/${id}/accept`, fields),
+  declineDateRequest: (id) => request('POST', `/date-requests/${id}/decline`),
+  cancelDateRequest: (id) => request('POST', `/date-requests/${id}/cancel`),
   ackEventNotification: (id) => request('POST', `/calendar/notifications/${id}/ack`),
   uploadAttachment: async ({ ownerKind, questionId, responseId, file, fileName, mimeType, durationSecs }) => {
     const form = new FormData();

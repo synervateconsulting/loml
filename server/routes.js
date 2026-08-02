@@ -1962,8 +1962,42 @@ router.get('/calendar', requireUser, async (req, res) => {
     },
   });
 
+  // Date requests (pending + accepted), with the accepted event's when.
+  const reqs = await query(
+    `SELECT r.id, r.requester_id, r.recipient_id, r.title, r.description, r.location, r.status,
+            r.event_id, r.responded_by, r.responded_at, r.created_at,
+            ru.display_name AS requester_name, cu.display_name AS recipient_name,
+            e.kind AS event_kind, e.all_day AS event_all_day,
+            to_char(e.starts_at, 'YYYY-MM-DD"T"HH24:MI') AS event_starts_at
+       FROM date_request r
+       JOIN app_user ru ON ru.id = r.requester_id
+       JOIN app_user cu ON cu.id = r.recipient_id
+       LEFT JOIN calendar_event e ON e.id = r.event_id
+      WHERE r.is_removed = false AND (r.requester_id = $1 OR r.recipient_id = $1)
+      ORDER BY r.created_at DESC`,
+    [req.user.id]
+  );
+  const dateRequests = reqs.rows.map((r) => ({
+    id: r.id,
+    requesterId: r.requester_id,
+    requesterName: r.requester_name,
+    recipientId: r.recipient_id,
+    recipientName: r.recipient_name,
+    title: r.title,
+    description: r.description,
+    location: r.location,
+    status: r.status,
+    eventId: r.event_id,
+    eventStartsAt: r.event_starts_at,
+    eventAllDay: r.event_all_day,
+    eventKind: r.event_kind,
+    respondedAt: r.responded_at,
+    createdAt: r.created_at,
+  }));
+
   res.json({
     events: shaped,
+    dateRequests,
     notifications: {
       needsAck: notes.rows.filter((n) => !n.acknowledged).map(shapeNote),
       acknowledged: notes.rows.filter((n) => n.acknowledged).map(shapeNote),
@@ -2056,6 +2090,106 @@ router.post('/calendar/notifications/:id/ack', requireUser, async (req, res) => 
     'UPDATE event_notification SET acknowledged = true, acknowledged_at = now() WHERE id = $1 AND to_id = $2 AND acknowledged = false',
     [req.params.id, req.user.id]
   );
+  res.json({ ok: true });
+});
+
+/* ------------------------------------------------------------ date requests */
+
+// Propose a date: title (+ optional description / location), no time yet.
+router.post('/date-requests', requireUser, async (req, res) => {
+  const title = (req.body?.title || '').trim().slice(0, 160);
+  if (!title) return res.status(400).json({ error: 'Give it a title.' });
+  const description = (req.body?.description || '').trim();
+  const location = (req.body?.location || '').trim();
+  const partner = await partnerOf(req.user.id);
+  if (!partner) return res.status(400).json({ error: 'No partner to send to.' });
+  const { rows } = await query(
+    `INSERT INTO date_request (requester_id, recipient_id, title, description, location)
+     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [req.user.id, partner.id, title, description, location]
+  );
+  await logActivity(req.user.id, 'date_requested', 'date_request', rows[0].id, { title });
+  notify(partner.id, { title: `${req.user.display_name} sent a date request`, body: title });
+  res.status(201).json({ id: rows[0].id });
+});
+
+// Accept: the recipient sets a date/time (+ type, editable details), which
+// creates the calendar event and marks the request accepted.
+router.post('/date-requests/:id/accept', requireUser, async (req, res) => {
+  const { rows } = await query(
+    "SELECT * FROM date_request WHERE id = $1 AND is_removed = false AND status = 'pending'",
+    [req.params.id]
+  );
+  const r = rows[0];
+  if (!r) return res.status(404).json({ error: 'Request not found.' });
+  if (r.recipient_id !== req.user.id) return res.status(403).json({ error: 'Only the person asked can accept.' });
+
+  const kind = EVENT_KINDS.includes(req.body?.kind) ? req.body.kind : 'date_night';
+  const title = (req.body?.title || r.title || '').trim().slice(0, 160);
+  const startsAt = (req.body?.startsAt || '').trim();
+  const allDay = Boolean(req.body?.allDay);
+  const description = (req.body?.description ?? r.description ?? '').trim();
+  const location = (req.body?.location ?? r.location ?? '').trim();
+  if (!title) return res.status(400).json({ error: 'Give it a title.' });
+  if (!STARTS_AT_RE.test(startsAt)) return res.status(400).json({ error: 'Pick a date.' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const ev = await client.query(
+      `INSERT INTO calendar_event (kind, title, starts_at, all_day, description, location, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $7) RETURNING id`,
+      [kind, title, startsAt, allDay, description, location, req.user.id]
+    );
+    const eventId = ev.rows[0].id;
+    await client.query(
+      "UPDATE date_request SET status = 'accepted', event_id = $1, responded_by = $2, responded_at = now() WHERE id = $3",
+      [eventId, req.user.id, r.id]
+    );
+    await client.query('COMMIT');
+    await logActivity(req.user.id, 'accepted_date_request', 'date_request', r.id, { eventId });
+    // A real event now exists — the requester gets a calendar notification + push.
+    await notifyEvent(eventId, asUser(req.user.id, req.user.display_name), 'created', title);
+    res.status(201).json({ ok: true, eventId });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+});
+
+// Decline (recipient): soft-removed; the requester is notified.
+router.post('/date-requests/:id/decline', requireUser, async (req, res) => {
+  const { rows } = await query(
+    "SELECT * FROM date_request WHERE id = $1 AND is_removed = false AND status = 'pending'",
+    [req.params.id]
+  );
+  const r = rows[0];
+  if (!r) return res.status(404).json({ error: 'Request not found.' });
+  if (r.recipient_id !== req.user.id) return res.status(403).json({ error: 'Only the person asked can decline.' });
+  await query(
+    "UPDATE date_request SET status = 'declined', is_removed = true, responded_by = $1, responded_at = now() WHERE id = $2",
+    [req.user.id, r.id]
+  );
+  notify(r.requester_id, { title: `${req.user.display_name} declined a date request`, body: r.title });
+  res.json({ ok: true });
+});
+
+// Cancel / withdraw (requester): soft-removed; the recipient is notified.
+router.post('/date-requests/:id/cancel', requireUser, async (req, res) => {
+  const { rows } = await query(
+    "SELECT * FROM date_request WHERE id = $1 AND is_removed = false AND status = 'pending'",
+    [req.params.id]
+  );
+  const r = rows[0];
+  if (!r) return res.status(404).json({ error: 'Request not found.' });
+  if (r.requester_id !== req.user.id) return res.status(403).json({ error: 'Only the requester can cancel.' });
+  await query(
+    "UPDATE date_request SET status = 'cancelled', is_removed = true, responded_by = $1, responded_at = now() WHERE id = $2",
+    [req.user.id, r.id]
+  );
+  notify(r.recipient_id, { title: `${req.user.display_name} withdrew a date request`, body: r.title });
   res.json({ ok: true });
 });
 
