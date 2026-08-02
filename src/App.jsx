@@ -16,11 +16,11 @@ import { ShareModal, RespondModal, EditQuestionModal, ViewModal } from './compon
 const firstName = (name = '') => name.split(' ')[0];
 
 const NAV = [
-  ['shares', 'Shares'],
-  ['keepsakes', 'Keepsakes'],
-  ['lists', 'Lists'],
-  ['games', 'Games'],
+  ['shares', '💞 Shares'],
+  ['keepsakes', '⭐️ Keepsakes'],
   ['spicy', '🔥😈🔥'],
+  ['games', '🕹️ Games'],
+  ['lists', '📋 Lists'],
 ];
 
 export default function App() {
