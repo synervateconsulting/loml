@@ -15,6 +15,18 @@ async function request(method, path, body) {
   return data;
 }
 
+export const admin = {
+  me: () => request('GET', '/admin/me'),
+  login: (key) => request('POST', '/admin/login', { key }),
+  logout: () => request('POST', '/admin/logout'),
+  overview: () => request('GET', '/admin/overview'),
+  sharePreview: (id) => request('GET', `/admin/share/${id}`),
+  deleteShare: (id) => request('DELETE', `/admin/share/${id}`),
+  deleteDaily: (day, userId) => request('DELETE', `/admin/daily?day=${day}${userId ? `&userId=${userId}` : ''}`),
+  deleteEvent: (id) => request('DELETE', `/admin/event/${id}`),
+  resetGames: (opts) => request('POST', '/admin/games/reset', opts),
+};
+
 export const api = {
   me: () => request('GET', '/me'),
   login: (accessKey) => request('POST', '/login', { accessKey }),

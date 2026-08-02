@@ -66,6 +66,46 @@ export function requireUser(req, res, next) {
   next();
 }
 
+/* ------------------------------------------------------------------ admin */
+// A separate maintenance identity — NOT one of the two couple members. Enabled
+// only when ADMIN_ACCESS_KEY is set; otherwise every admin route 404s.
+const ADMIN_COOKIE = 'loml_admin';
+const ADMIN_KEY = process.env.ADMIN_ACCESS_KEY || '';
+
+export const adminEnabled = () => Boolean(ADMIN_KEY);
+
+export function adminKeyMatches(key) {
+  if (!ADMIN_KEY) return false;
+  const a = Buffer.from(String(key || ''));
+  const b = Buffer.from(ADMIN_KEY);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+export function startAdminSession(res) {
+  const token = sign({ admin: true, exp: Date.now() + THIRTY_DAYS });
+  res.cookie(ADMIN_COOKIE, token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: THIRTY_DAYS,
+  });
+}
+
+export function endAdminSession(res) {
+  res.clearCookie(ADMIN_COOKIE);
+}
+
+export function isAdmin(req) {
+  if (!ADMIN_KEY) return false;
+  return Boolean(unsign(req.cookies?.[ADMIN_COOKIE])?.admin);
+}
+
+export function requireAdmin(req, res, next) {
+  if (!ADMIN_KEY) return res.status(404).json({ error: 'Not found.' });
+  if (!isAdmin(req)) return res.status(401).json({ error: 'Admin sign-in required.' });
+  next();
+}
+
 /** The other half of the pair. This app always has exactly two people in it. */
 export async function partnerOf(userId) {
   const { rows } = await query(
