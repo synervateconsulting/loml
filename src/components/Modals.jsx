@@ -725,6 +725,7 @@ function RevealView({ question, meId, onClose, onRefresh }) {
               onRefresh?.();
               return c;
             }}
+            onEdit={(id, body) => api.editComment(id, body)}
           />
         </>
       ) : (

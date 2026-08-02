@@ -70,6 +70,7 @@ export function DailyHistory({ meId }) {
                         refresh();
                         return c;
                       }}
+                      onEdit={(id, body) => api.editDailyComment(id, body)}
                     />
                   </>
                 )}
@@ -249,6 +250,7 @@ export function DailyModal({ daily, meId, onClose, onAnswered, onRefresh }) {
           onRefresh?.();
           return c;
         }}
+        onEdit={(id, body) => api.editDailyComment(id, body)}
       />
 
       {daily.recent?.length > 0 && (

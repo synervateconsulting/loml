@@ -396,6 +396,12 @@ CREATE TABLE IF NOT EXISTS event_comment (
 
 CREATE INDEX IF NOT EXISTS event_comment_event_idx ON event_comment (event_id);
 
+-- Comments are editable in place; edited_at is null until first edited.
+ALTER TABLE question_comment ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+ALTER TABLE daily_comment ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+ALTER TABLE list_comment ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+ALTER TABLE event_comment ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+
 -- One notification per calendar action, aimed at the other person, acknowledged
 -- like a share and then filed under "acknowledged".
 CREATE TABLE IF NOT EXISTS event_notification (

@@ -1770,9 +1770,35 @@ body::before {
 .cmt--mine .cmt__who {
   color: var(--candle);
 }
+.cmt__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
 .cmt__body {
   font-size: 14px;
   overflow-wrap: anywhere;
+}
+.cmt__at {
+  font-size: 11px;
+  color: var(--muted);
+}
+.cmt__edit,
+.comment__edit {
+  font-size: 11px;
+  margin-left: 8px;
+}
+.cmt__editrow,
+.comment__editrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0;
+}
+.cmt__editrow .field__input,
+.comment__editrow .field__input {
+  flex: 1;
 }
 .cthread__compose {
   display: flex;
