@@ -494,6 +494,7 @@ export function RespondModal({ question, meId, onClose, onDone, onRefresh }) {
           reactions={question.reactions}
           meId={meId}
           canReact={question.askerId !== meId}
+          onChanged={onRefresh}
         />
         <hr className="rule" />
         <label className="field">
@@ -715,6 +716,7 @@ function RevealView({ question, meId, onClose, onRefresh }) {
               reactions={(r.reactions || []).filter((x) => x.userId === meId)}
               meId={meId}
               canReact
+              onChanged={onRefresh}
             />
           </div>
           <CommentThread
@@ -902,6 +904,7 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone, onRe
           reactions={question.reactions}
           meId={meId}
           canReact={question.askerId !== meId}
+          onChanged={onRefresh}
         />
         <hr className="rule" />
         <p className="eyebrow">{canEditAnswer ? yourReplyLabel : theirReplyLabel}</p>
@@ -924,6 +927,7 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone, onRe
             reactions={question.response.reactions}
             meId={meId}
             canReact={question.response.responderId !== meId}
+            onChanged={onRefresh}
           />
         )}
         {canEditAnswer && question.response?.seenAt && (
@@ -939,6 +943,22 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone, onRe
           <p className="hint">
             {question_ ? 'Answer' : 'Note'} edited {question.response.version - 1}×. Every version is kept.
           </p>
+        )}
+        {/* Either partner can comment once the share is finished. */}
+        {question.status === 'answered' && (
+          <>
+            <hr className="rule" />
+            <CommentThread
+              comments={question.comments || []}
+              meId={meId}
+              onSubmit={async (body) => {
+                const c = await api.commentShare(question.id, body);
+                onRefresh?.();
+                return c;
+              }}
+              onEdit={(id, body) => api.editComment(id, body)}
+            />
+          </>
         )}
         {error && <p className="notice notice--error">{error}</p>}
       </Modal>

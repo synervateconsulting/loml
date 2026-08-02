@@ -162,7 +162,7 @@ export default function ListsView({ meId, users = {} }) {
             )}
 
             <div className="listcard__social">
-              <Reactions targetKind="list" targetId={l.id} reactions={l.reactions || []} meId={meId} canReact />
+              <Reactions targetKind="list" targetId={l.id} reactions={l.reactions || []} meId={meId} canReact onChanged={load} />
               <CommentThread
                 comments={l.comments || []}
                 meId={meId}
