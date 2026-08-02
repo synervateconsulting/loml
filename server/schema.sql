@@ -417,6 +417,26 @@ CREATE TABLE IF NOT EXISTS event_notification (
 
 CREATE INDEX IF NOT EXISTS event_notification_to_idx ON event_notification (to_id, acknowledged);
 
+-- A date request: one partner proposes a date (title + optional description /
+-- location, no time yet); the other picks a date & time to accept it, which
+-- creates the calendar event (event_id). Declined/cancelled requests are
+-- soft-removed. Nothing is hard-deleted.
+CREATE TABLE IF NOT EXISTS date_request (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  requester_id INTEGER NOT NULL REFERENCES app_user(id),
+  recipient_id INTEGER NOT NULL REFERENCES app_user(id),
+  title        TEXT NOT NULL,
+  description  TEXT NOT NULL DEFAULT '',
+  location     TEXT NOT NULL DEFAULT '',
+  status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'declined', 'cancelled')),
+  event_id     UUID REFERENCES calendar_event(id),
+  responded_by INTEGER REFERENCES app_user(id),
+  responded_at TIMESTAMPTZ,
+  is_removed   BOOLEAN NOT NULL DEFAULT false,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS date_request_people_idx ON date_request (requester_id, recipient_id);
+
 -- The countdown is now a pointer to a calendar event.
 ALTER TABLE couple_state ADD COLUMN IF NOT EXISTS countdown_event_id UUID REFERENCES calendar_event(id);
 

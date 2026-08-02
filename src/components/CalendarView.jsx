@@ -402,16 +402,21 @@ function EventViewer({ event, meId, partner, isCountdown, onEdit, onClose, onCha
 
 /* ---------------------------------------------------------------- main view */
 
-export default function CalendarView({ events, notifications, countdownEventId, meId, partner, onChanged }) {
+export default function CalendarView({ events, dateRequests = [], notifications, countdownEventId, meId, partner, onChanged }) {
   const now = new Date();
   const [cursor, setCursor] = useState({ y: now.getFullYear(), m: now.getMonth() });
   const [pane, setPane] = useState('month');
   const [dayKey, setDayKey] = useState(null);
   const [viewId, setViewId] = useState(null);
   const [edit, setEdit] = useState(null); // { id } | { isNew: true, date }
+  const [reqTab, setReqTab] = useState('theirs');
+  const [compose, setCompose] = useState(false); // new date request
+  const [accepting, setAccepting] = useState(null); // date request being accepted
+  const [reqConfirm, setReqConfirm] = useState(null); // { steps, action }
 
   const needsAck = notifications?.needsAck || [];
   const acknowledged = notifications?.acknowledged || [];
+  const pendingOnMe = dateRequests.filter((r) => r.recipientId === meId && r.status === 'pending').length;
   const today = todayKey();
   const upcoming = events
     .filter((e) => dayKeyOf(e.startsAt) >= today)
@@ -459,6 +464,42 @@ export default function CalendarView({ events, notifications, countdownEventId, 
     setViewId(null);
   };
 
+  const afterRequest = async () => {
+    await onChanged();
+    setCompose(false);
+    setAccepting(null);
+  };
+  const declineRequest = (r) =>
+    setReqConfirm({
+      steps: [
+        {
+          title: 'Decline this date request?',
+          body: `“${r.title}” will be declined and ${r.requesterName} will be notified.`,
+          confirm: 'Decline',
+          tone: 'danger',
+        },
+      ],
+      action: async () => {
+        await api.declineDateRequest(r.id);
+        await onChanged();
+      },
+    });
+  const cancelRequest = (r) =>
+    setReqConfirm({
+      steps: [
+        {
+          title: 'Withdraw this date request?',
+          body: `“${r.title}” will be cancelled.`,
+          confirm: 'Withdraw',
+          tone: 'danger',
+        },
+      ],
+      action: async () => {
+        await api.cancelDateRequest(r.id);
+        await onChanged();
+      },
+    });
+
   return (
     <div className="calendar">
       <div className="calbar">
@@ -479,6 +520,14 @@ export default function CalendarView({ events, notifications, countdownEventId, 
           </button>
           <button
             type="button"
+            className={`topnav__item ${pane === 'requests' ? 'is-active' : ''}`}
+            onClick={() => setPane('requests')}
+          >
+            Date Requests
+            {pendingOnMe > 0 && <span className="pill">{pendingOnMe}</span>}
+          </button>
+          <button
+            type="button"
             className={`topnav__item ${pane === 'notifications' ? 'is-active' : ''}`}
             onClick={() => setPane('notifications')}
           >
@@ -486,16 +535,24 @@ export default function CalendarView({ events, notifications, countdownEventId, 
             {needsAck.length > 0 && <span className="pill">{needsAck.length}</span>}
           </button>
         </div>
-        {pane === 'month' && (
-          <button
-            type="button"
-            className="btn btn--small btn--primary"
-            onClick={() => setEdit({ isNew: true, date: todayKey() })}
-          >
-            + Add event
-          </button>
-        )}
       </div>
+      {(pane === 'month' || pane === 'upcoming' || pane === 'requests') && (
+        <div className="calactions">
+          {pane === 'requests' ? (
+            <button type="button" className="btn btn--small btn--primary" onClick={() => setCompose(true)}>
+              + Date Request
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn--small btn--primary"
+              onClick={() => setEdit({ isNew: true, date: todayKey() })}
+            >
+              + Event
+            </button>
+          )}
+        </div>
+      )}
 
       {pane === 'month' && (
         <>
@@ -579,6 +636,20 @@ export default function CalendarView({ events, notifications, countdownEventId, 
         </div>
       )}
 
+      {pane === 'requests' && (
+        <DateRequestsPane
+          requests={dateRequests}
+          meId={meId}
+          partnerName={partner}
+          reqTab={reqTab}
+          setReqTab={setReqTab}
+          onAccept={(r) => setAccepting(r)}
+          onDecline={declineRequest}
+          onCancel={cancelRequest}
+          onOpenEvent={openEvent}
+        />
+      )}
+
       {dayKey && (
         <Modal
           onScrimClick={() => setDayKey(null)}
@@ -647,7 +718,296 @@ export default function CalendarView({ events, notifications, countdownEventId, 
           onChanged={onChanged}
         />
       )}
+
+      {compose && <DateRequestCompose partnerName={partner} onClose={() => setCompose(false)} onDone={afterRequest} />}
+
+      {accepting && (
+        <DateRequestAccept
+          request={accepting}
+          defaultDate={todayKey()}
+          onClose={() => setAccepting(null)}
+          onDone={afterRequest}
+        />
+      )}
+
+      {reqConfirm && (
+        <Confirm
+          steps={reqConfirm.steps}
+          onResolve={(ok) => {
+            const { action } = reqConfirm;
+            setReqConfirm(null);
+            if (ok) action();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------ date requests */
+
+function DateReqRow({ r, mine, onAccept, onDecline, onCancel, onOpenEvent }) {
+  const pending = r.status === 'pending';
+  return (
+    <div className="reqcard">
+      <div className="reqcard__main">
+        <p className="reqcard__title">{r.title}</p>
+        {r.location && <p className="reqcard__loc">📍 {r.location}</p>}
+        {r.description && <p className="reqcard__desc">{r.description}</p>}
+        {!pending && r.eventStartsAt && (
+          <button type="button" className="linkbtn reqcard__when" onClick={() => onOpenEvent(r.eventId)}>
+            {eventIcon(r.eventKind)} {formatEventWhen(r.eventStartsAt, r.eventAllDay)} · view event
+          </button>
+        )}
+      </div>
+      {pending && (
+        <div className="reqcard__actions">
+          {mine ? (
+            <button type="button" className="btn btn--small btn--danger" onClick={() => onCancel(r)}>
+              Cancel
+            </button>
+          ) : (
+            <>
+              <button type="button" className="btn btn--small btn--primary" onClick={() => onAccept(r)}>
+                Accept
+              </button>
+              <button type="button" className="btn btn--small btn--ghost" onClick={() => onDecline(r)}>
+                Decline
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DateRequestsPane({ requests, meId, partnerName, reqTab, setReqTab, onAccept, onDecline, onCancel, onOpenEvent }) {
+  const theirs = requests.filter((r) => r.recipientId === meId); // sent to me
+  const mine = requests.filter((r) => r.requesterId === meId); // I sent
+  const isMine = reqTab === 'mine';
+  const list = isMine ? mine : theirs;
+  const waiting = list.filter((r) => r.status === 'pending');
+  const done = list.filter((r) => r.status === 'accepted');
+  const waitingHeading = isMine ? `Waiting on ${partnerName}` : 'Waiting on you';
+
+  return (
+    <div className="reqpane">
+      <nav className="tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={reqTab === 'theirs'}
+          className={`tab ${reqTab === 'theirs' ? 'is-active' : ''}`}
+          onClick={() => setReqTab('theirs')}
+        >
+          {partnerName}’s requests
+          {theirs.some((r) => r.status === 'pending') && <span className="dot" aria-label="waiting on you" />}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={reqTab === 'mine'}
+          className={`tab ${reqTab === 'mine' ? 'is-active' : ''}`}
+          onClick={() => setReqTab('mine')}
+        >
+          My requests
+        </button>
+      </nav>
+
+      <section className="section">
+        <header className="section__head">
+          <h2 className="section__title">{waitingHeading}</h2>
+          <span className="section__count">{waiting.length}</span>
+        </header>
+        {waiting.length === 0 ? (
+          <p className="empty">{isMine ? 'Nothing waiting on them.' : 'Nothing waiting on you.'}</p>
+        ) : (
+          waiting.map((r) => (
+            <DateReqRow
+              key={r.id}
+              r={r}
+              mine={isMine}
+              onAccept={onAccept}
+              onDecline={onDecline}
+              onCancel={onCancel}
+              onOpenEvent={onOpenEvent}
+            />
+          ))
+        )}
+      </section>
+
+      <section className="section">
+        <header className="section__head">
+          <h2 className="section__title">Acknowledged</h2>
+          <span className="section__count">{done.length}</span>
+        </header>
+        {done.length === 0 ? (
+          <p className="empty">Accepted requests land here as calendar events.</p>
+        ) : (
+          done.map((r) => <DateReqRow key={r.id} r={r} mine={isMine} onOpenEvent={onOpenEvent} />)
+        )}
+      </section>
+    </div>
+  );
+}
+
+function DateRequestCompose({ partnerName, onClose, onDone }) {
+  const [title, setTitle] = useState('');
+  const [location, setLocation] = useState('');
+  const [description, setDescription] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const send = async () => {
+    if (!title.trim()) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api.createDateRequest({ title: title.trim(), location: location.trim(), description: description.trim() });
+      await onDone();
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      onScrimClick={onClose}
+      eyebrow="Ask for a date"
+      title="New date request"
+      footer={
+        <>
+          <button type="button" className="btn btn--ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="btn btn--primary" onClick={send} disabled={!title.trim() || busy}>
+            Send request
+          </button>
+        </>
+      }
+    >
+      <p className="hint">Suggest the date — {partnerName} picks a day and time to make it happen.</p>
+      <label className="field">
+        <span className="field__label">Title</span>
+        <input
+          className="field__input"
+          value={title}
+          maxLength={160}
+          placeholder="Dinner at that new place?"
+          onChange={(e) => setTitle(e.target.value)}
+        />
+      </label>
+      <label className="field">
+        <span className="field__label">Location (optional)</span>
+        <input
+          className="field__input"
+          value={location}
+          maxLength={200}
+          placeholder="Where?"
+          onChange={(e) => setLocation(e.target.value)}
+        />
+      </label>
+      <label className="field">
+        <span className="field__label">Description (optional)</span>
+        <textarea
+          className="field__input field__input--area"
+          rows={4}
+          value={description}
+          placeholder="Anything else."
+          onChange={(e) => setDescription(e.target.value)}
+        />
+      </label>
+      {error && <p className="notice notice--error">{error}</p>}
+    </Modal>
+  );
+}
+
+function DateRequestAccept({ request, defaultDate, onClose, onDone }) {
+  const [kind, setKind] = useState('date_night');
+  const [title, setTitle] = useState(request.title || '');
+  const [allDay, setAllDay] = useState(false);
+  const [startsAt, setStartsAt] = useState(defaultDate ? `${defaultDate}T19:00` : '');
+  const [location, setLocation] = useState(request.location || '');
+  const [description, setDescription] = useState(request.description || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const canSave = title.trim() && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(startsAt) && !busy;
+
+  const accept = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await api.acceptDateRequest(request.id, {
+        kind,
+        title: title.trim(),
+        startsAt,
+        allDay,
+        location: location.trim(),
+        description: description.trim(),
+      });
+      await onDone();
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      onScrimClick={onClose}
+      eyebrow={`${request.requesterName}’s date request`}
+      title="Set a date & time"
+      footer={
+        <>
+          <button type="button" className="btn btn--ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="btn btn--primary" onClick={accept} disabled={!canSave}>
+            Add to calendar
+          </button>
+        </>
+      }
+    >
+      <p className="hint">Pick when — this adds it to the calendar and lets {request.requesterName} know.</p>
+      <div className="field">
+        <span className="field__label">Type</span>
+        <div className="segmented segmented--wrap" role="group" aria-label="Event type">
+          {EVENT_TYPES.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              className={`segmented__opt ${kind === t.key ? 'is-active' : ''}`}
+              aria-pressed={kind === t.key}
+              onClick={() => setKind(t.key)}
+            >
+              {t.icon} {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <label className="field">
+        <span className="field__label">Title</span>
+        <input className="field__input" value={title} maxLength={160} onChange={(e) => setTitle(e.target.value)} />
+      </label>
+      <WhenFields allDay={allDay} setAllDay={setAllDay} startsAt={startsAt} setStartsAt={setStartsAt} />
+      <label className="field">
+        <span className="field__label">Location (optional)</span>
+        <input className="field__input" value={location} maxLength={200} onChange={(e) => setLocation(e.target.value)} />
+      </label>
+      <label className="field">
+        <span className="field__label">Description (optional)</span>
+        <textarea
+          className="field__input field__input--area"
+          rows={4}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+      </label>
+      {error && <p className="notice notice--error">{error}</p>}
+    </Modal>
   );
 }
 

@@ -82,8 +82,11 @@ export default function App() {
   useEffect(() => {
     const waiting = data.received.filter((q) => q.status === 'open').length;
     const dailyPending = daily && !daily.iAnswered ? 1 : 0;
-    syncBadge(waiting + (calendar.notifications?.needsAck?.length || 0) + dailyPending);
-  }, [data.received, calendar, daily]);
+    const reqPending = (calendar.dateRequests || []).filter(
+      (r) => r.recipientId === session?.me?.id && r.status === 'pending'
+    ).length;
+    syncBadge(waiting + (calendar.notifications?.needsAck?.length || 0) + dailyPending + reqPending);
+  }, [data.received, calendar, daily, session]);
 
   // Re-cover the spicy tab every time you leave it, so it always asks again.
   useEffect(() => {
@@ -398,7 +401,10 @@ export default function App() {
             aria-pressed={view === 'calendar'}
           >
             📅
-            {calendar.notifications?.needsAck?.length > 0 && <span className="caldot" aria-label="calendar updates" />}
+            {(calendar.notifications?.needsAck?.length > 0 ||
+              (calendar.dateRequests || []).some((r) => r.recipientId === me.id && r.status === 'pending')) && (
+              <span className="caldot" aria-label="calendar updates" />
+            )}
           </button>
         </div>
         <div className="actionbar">
@@ -460,6 +466,7 @@ export default function App() {
         {view === 'calendar' && (
           <CalendarView
             events={calendar.events}
+            dateRequests={calendar.dateRequests || []}
             notifications={calendar.notifications}
             countdownEventId={couple?.countdown?.eventId || null}
             meId={me.id}

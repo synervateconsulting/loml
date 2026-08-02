@@ -904,6 +904,52 @@ body::before {
   gap: 6px;
   flex-wrap: wrap;
 }
+/* action-button row under the calendar sub-nav (+ Event / + Date Request) */
+.calactions {
+  display: flex;
+  margin: 0 0 14px;
+}
+/* date requests */
+.reqpane {
+  margin-top: 4px;
+}
+.reqcard {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 11px 13px;
+  margin-bottom: 8px;
+}
+.reqcard__main {
+  flex: 1;
+  min-width: 0;
+}
+.reqcard__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.reqcard__loc,
+.reqcard__desc {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.reqcard__when {
+  margin-top: 6px;
+  font-size: 13px;
+}
+.reqcard__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: none;
+}
 .games .calpanes {
   margin-bottom: 16px;
 }
