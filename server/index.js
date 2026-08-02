@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import { migrate } from './db.js';
 import { attachUser } from './auth.js';
 import api from './routes.js';
+import adminApi from './admin.js';
 import { startDailyReminders } from './reminders.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -18,6 +19,7 @@ app.use(attachUser);
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
+app.use('/api/admin', adminApi);
 app.use('/api', api);
 app.use('/api', (_req, res) => res.status(404).json({ error: 'No such endpoint.' }));
 

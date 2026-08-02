@@ -196,6 +196,16 @@ CREATE TABLE IF NOT EXISTS game_points (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Audit trail for the admin console's hard deletes (records the action, not the
+-- purged data itself).
+CREATE TABLE IF NOT EXISTS admin_action (
+  id          BIGSERIAL PRIMARY KEY,
+  action      TEXT NOT NULL,
+  target      TEXT,
+  detail      JSONB,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- The daily question: both partners answer the same date-derived prompt, blind
 -- until both are in. One answer per person per day.
 CREATE TABLE IF NOT EXISTS daily_answer (
