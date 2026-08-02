@@ -171,6 +171,7 @@ export default function ListsView({ meId, users = {} }) {
                   load();
                   return c;
                 }}
+                onEdit={(id, body) => api.editListComment(id, body)}
               />
             </div>
           </section>

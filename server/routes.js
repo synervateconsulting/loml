@@ -249,7 +249,7 @@ async function keepersFor(questionIds) {
 async function commentsFor(questionIds) {
   if (!questionIds.length) return [];
   const { rows } = await query(
-    `SELECT c.id, c.question_id, c.user_id, c.body, c.created_at, u.display_name
+    `SELECT c.id, c.question_id, c.user_id, c.body, c.created_at, c.edited_at, u.display_name
        FROM question_comment c JOIN app_user u ON u.id = c.user_id
       WHERE c.question_id = ANY($1::uuid[]) ORDER BY c.created_at ASC`,
     [questionIds]
@@ -260,7 +260,28 @@ async function commentsFor(questionIds) {
 const commentsOn = (comments, id) =>
   (comments || [])
     .filter((c) => c.question_id === id)
-    .map((c) => ({ id: c.id, userId: c.user_id, userName: c.display_name, body: c.body, createdAt: c.created_at }));
+    .map((c) => ({ id: c.id, userId: c.user_id, userName: c.display_name, body: c.body, createdAt: c.created_at, editedAt: c.edited_at }));
+
+// Edit a comment in place. Author-only. `table` comes from our own code (never
+// user input), so it's safe to interpolate. Returns the new edited_at.
+async function editCommentRow(table, id, userId, body) {
+  const cur = await query(`SELECT user_id FROM ${table} WHERE id = $1`, [id]);
+  if (!cur.rows[0]) return { status: 404, error: 'Not found.' };
+  if (cur.rows[0].user_id !== userId) return { status: 403, error: 'You can only edit your own comment.' };
+  const upd = await query(`UPDATE ${table} SET body = $1, edited_at = now() WHERE id = $2 RETURNING edited_at`, [
+    body,
+    id,
+  ]);
+  return { status: 200, editedAt: upd.rows[0].edited_at };
+}
+
+async function handleCommentEdit(table, req, res) {
+  const body = (req.body?.body || '').trim().slice(0, 500);
+  if (!body) return res.status(400).json({ error: 'Write a comment.' });
+  const r = await editCommentRow(table, req.params.id, req.user.id, body);
+  if (r.error) return res.status(r.status).json({ error: r.error });
+  res.json({ id: req.params.id, body, editedAt: r.editedAt });
+}
 
 const reactionsOn = (reactions, kind, id) =>
   reactions.filter((x) => x.target_kind === kind && x.target_id === id).map((x) => ({ userId: x.user_id, emoji: x.emoji }));
@@ -1084,6 +1105,9 @@ router.post('/questions/:id/comments', requireUser, async (req, res) => {
   });
 });
 
+// Edit a game comment (author only).
+router.patch('/comments/:id', requireUser, (req, res) => handleCommentEdit('question_comment', req, res));
+
 /* ---------------------------------------------------------------- keepsakes */
 
 router.post('/questions/:id/keepsake', requireUser, async (req, res) => {
@@ -1144,7 +1168,7 @@ async function dailyReactionsFor(days) {
 async function dailyCommentsFor(days) {
   if (!days.length) return [];
   const { rows } = await query(
-    `SELECT to_char(c.day, 'YYYY-MM-DD') AS day, c.id, c.user_id, c.body, c.created_at, u.display_name
+    `SELECT to_char(c.day, 'YYYY-MM-DD') AS day, c.id, c.user_id, c.body, c.created_at, c.edited_at, u.display_name
        FROM daily_comment c JOIN app_user u ON u.id = c.user_id
       WHERE c.day = ANY($1::date[]) ORDER BY c.created_at ASC`,
     [days]
@@ -1205,7 +1229,7 @@ router.get('/daily', requireUser, async (req, res) => {
     reactions: reactions.filter((r) => r.day === today).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
     comments: comments
       .filter((c) => c.day === today)
-      .map((c) => ({ id: c.id, userId: c.user_id, userName: c.display_name, body: c.body, createdAt: c.created_at })),
+      .map((c) => ({ id: c.id, userId: c.user_id, userName: c.display_name, body: c.body, createdAt: c.created_at , editedAt: c.edited_at })),
   });
 });
 
@@ -1242,7 +1266,7 @@ router.get('/daily/history', requireUser, async (req, res) => {
   const commentsByDay = new Map();
   for (const c of dComments) {
     if (!commentsByDay.has(c.day)) commentsByDay.set(c.day, []);
-    commentsByDay.get(c.day).push({ id: c.id, userId: c.user_id, userName: c.display_name, body: c.body, createdAt: c.created_at });
+    commentsByDay.get(c.day).push({ id: c.id, userId: c.user_id, userName: c.display_name, body: c.body, createdAt: c.created_at , editedAt: c.edited_at });
   }
 
   const days = [];
@@ -1359,6 +1383,9 @@ router.post('/daily/comment', requireUser, async (req, res) => {
     createdAt: ins.rows[0].created_at,
   });
 });
+
+// Edit a daily-question comment (author only).
+router.patch('/daily/comments/:id', requireUser, (req, res) => handleCommentEdit('daily_comment', req, res));
 
 // Played keys + the shared "Knowing You" points total.
 router.get('/games/used', requireUser, async (_req, res) => {
@@ -1662,7 +1689,7 @@ router.get('/lists', requireUser, async (_req, res) => {
     : [];
   const comments = listIds.length
     ? (await query(
-        `SELECT c.list_id, c.id, c.user_id, c.body, c.created_at, u.display_name
+        `SELECT c.list_id, c.id, c.user_id, c.body, c.created_at, c.edited_at, u.display_name
            FROM list_comment c JOIN app_user u ON u.id = c.user_id
           WHERE c.list_id = ANY($1::uuid[]) ORDER BY c.created_at ASC`,
         [listIds]
@@ -1690,7 +1717,7 @@ router.get('/lists', requireUser, async (_req, res) => {
       reactions: reactions.filter((r) => r.target_id === l.id).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
       comments: comments
         .filter((c) => c.list_id === l.id)
-        .map((c) => ({ id: c.id, userId: c.user_id, userName: c.display_name, body: c.body, createdAt: c.created_at })),
+        .map((c) => ({ id: c.id, userId: c.user_id, userName: c.display_name, body: c.body, createdAt: c.created_at , editedAt: c.edited_at })),
     }))
   );
 });
@@ -1844,6 +1871,9 @@ router.post('/lists/:id/comments', requireUser, async (req, res) => {
   });
 });
 
+// Edit a list comment (author only).
+router.patch('/list-comments/:id', requireUser, (req, res) => handleCommentEdit('list_comment', req, res));
+
 /* -------------------------------------------------------------- calendar */
 
 const STARTS_AT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
@@ -1876,7 +1906,7 @@ router.get('/calendar', requireUser, async (req, res) => {
   const comments = ids.length
     ? (
         await query(
-          `SELECT c.id, c.event_id, c.user_id, u.display_name AS user_name, c.body, c.created_at
+          `SELECT c.id, c.event_id, c.user_id, u.display_name AS user_name, c.body, c.created_at, c.edited_at
              FROM event_comment c JOIN app_user u ON u.id = c.user_id
             WHERE c.event_id = ANY($1::uuid[]) AND c.is_removed = false
             ORDER BY c.created_at`,
@@ -1902,7 +1932,7 @@ router.get('/calendar', requireUser, async (req, res) => {
       .map((r) => ({ userId: r.user_id, emoji: r.emoji })),
     comments: comments
       .filter((c) => c.event_id === e.id)
-      .map((c) => ({ id: c.id, userId: c.user_id, userName: c.user_name, body: c.body, createdAt: c.created_at })),
+      .map((c) => ({ id: c.id, userId: c.user_id, userName: c.user_name, body: c.body, createdAt: c.created_at, editedAt: c.edited_at })),
   }));
 
   const notes = await query(
@@ -2017,6 +2047,9 @@ router.post('/calendar/events/:id/comments', requireUser, async (req, res) => {
   await notifyEvent(ev.id, asUser(req.user.id, req.user.display_name), 'commented', ev.title);
   res.status(201).json({ id: inserted.rows[0].id });
 });
+
+// Edit an event comment (author only).
+router.patch('/calendar/comments/:id', requireUser, (req, res) => handleCommentEdit('event_comment', req, res));
 
 router.post('/calendar/notifications/:id/ack', requireUser, async (req, res) => {
   await query(

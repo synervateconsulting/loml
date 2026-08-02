@@ -263,6 +263,7 @@ export function ThisThatView({ question, meId, onClose, onDone, onRefresh }) {
                 onRefresh?.();
                 return c;
               }}
+              onEdit={(id, body) => api.editComment(id, body)}
             />
           </div>
         )}
@@ -424,6 +425,7 @@ export function GuessView({ question, meId, onClose, onDone, onRefresh }) {
           onRefresh?.();
           return c;
         }}
+        onEdit={(id, body) => api.editComment(id, body)}
       />
       {error && <p className="notice notice--error">{error}</p>}
     </Modal>

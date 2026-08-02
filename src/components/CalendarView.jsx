@@ -211,6 +211,9 @@ function EventViewer({ event, meId, partner, isCountdown, onEdit, onClose, onCha
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmCountdown, setConfirmCountdown] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState('');
+  const [confirmEdit, setConfirmEdit] = useState(null); // { action }
 
   if (!event) {
     return (
@@ -232,6 +235,30 @@ function EventViewer({ event, meId, partner, isCountdown, onEdit, onClose, onCha
       setBusy(false);
     }
   };
+
+  const startEdit = (c) => {
+    setEditingId(c.id);
+    setEditText(c.body);
+  };
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditText('');
+  };
+  const saveEdit = (c) =>
+    setConfirmEdit({
+      action: async () => {
+        const body = editText.trim();
+        if (!body) return;
+        setBusy(true);
+        try {
+          await api.editEventComment(c.id, body);
+          cancelEdit();
+          await onChanged();
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
 
   const setAsCountdown = async () => {
     try {
@@ -289,13 +316,46 @@ function EventViewer({ event, meId, partner, isCountdown, onEdit, onClose, onCha
         <p className="hint">No comments yet.</p>
       ) : (
         <ul className="comments">
-          {event.comments.map((c) => (
-            <li key={c.id} className="comment">
-              <span className="comment__who">{c.userName}</span>
-              <span className="comment__body">{c.body}</span>
-              <span className="comment__at">{formatStamp(c.createdAt)}</span>
-            </li>
-          ))}
+          {event.comments.map((c) => {
+            const mine = c.userId === meId;
+            const editing = editingId === c.id;
+            return (
+              <li key={c.id} className="comment">
+                <span className="comment__who">
+                  {mine ? 'You' : c.userName}
+                  {mine && !editing && (
+                    <button type="button" className="linkbtn comment__edit" onClick={() => startEdit(c)}>
+                      Edit
+                    </button>
+                  )}
+                </span>
+                {editing ? (
+                  <span className="comment__editrow">
+                    <input
+                      className="field__input"
+                      value={editText}
+                      maxLength={500}
+                      autoFocus
+                      onChange={(e) => setEditText(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && saveEdit(c)}
+                    />
+                    <button type="button" className="btn btn--small" disabled={!editText.trim() || busy} onClick={() => saveEdit(c)}>
+                      Save
+                    </button>
+                    <button type="button" className="linkbtn" onClick={cancelEdit}>
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <span className="comment__body">{c.body}</span>
+                )}
+                <span className="comment__at">
+                  {formatStamp(c.createdAt)}
+                  {c.editedAt ? ` · edited ${formatStamp(c.editedAt)}` : ''}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       )}
       <div className="commentadd">
@@ -323,6 +383,16 @@ function EventViewer({ event, meId, partner, isCountdown, onEdit, onClose, onCha
         onResolve={(ok) => {
           setConfirmCountdown(false);
           if (ok) setAsCountdown();
+        }}
+      />
+    )}
+    {confirmEdit && (
+      <Confirm
+        steps={[{ title: 'Save this edit?', body: 'Your comment will be updated.', confirm: 'Save' }]}
+        onResolve={(ok) => {
+          const { action } = confirmEdit;
+          setConfirmEdit(null);
+          if (ok) action();
         }}
       />
     )}
