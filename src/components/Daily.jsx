@@ -61,6 +61,7 @@ export function DailyHistory({ meId }) {
                       meId={meId}
                       canReact
                       onReact={(emoji) => api.dailyReact(d.day, emoji)}
+                      onChanged={refresh}
                     />
                     <CommentThread
                       comments={d.comments || []}
@@ -241,6 +242,7 @@ export function DailyModal({ daily, meId, onClose, onAnswered, onRefresh }) {
         meId={meId}
         canReact
         onReact={(emoji) => api.dailyReact(daily.today, emoji)}
+        onChanged={onRefresh}
       />
       <CommentThread
         comments={daily.comments || []}

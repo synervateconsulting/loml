@@ -309,7 +309,7 @@ function EventViewer({ event, meId, partner, isCountdown, onEdit, onClose, onCha
           </button>
         )}
       </div>
-      <Reactions targetKind="event" targetId={event.id} reactions={event.reactions} meId={meId} canReact />
+      <Reactions targetKind="event" targetId={event.id} reactions={event.reactions} meId={meId} canReact onChanged={onChanged} />
       <hr className="rule" />
       <p className="eyebrow">Comments</p>
       {event.comments.length === 0 ? (

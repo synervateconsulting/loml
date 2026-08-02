@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { REACTION_EMOJI } from '../shares.js';
 import Confirm from './Confirm.jsx';
@@ -14,9 +14,15 @@ const fmtStamp = (iso) => {
 // your own share/reply) the bar is hidden — you just see their reaction.
 // Pass `onReact(emoji)` to override where the reaction is sent (e.g. the daily
 // question, which isn't a question row); otherwise it posts to /reactions.
-export function Reactions({ targetKind, targetId, reactions = [], meId, canReact = true, onReact }) {
+export function Reactions({ targetKind, targetId, reactions = [], meId, canReact = true, onReact, onChanged }) {
   const initialMine = reactions.find((r) => r.userId === meId)?.emoji || null;
   const [mine, setMine] = useState(initialMine);
+  // Re-sync when the underlying data actually changes (e.g. a reload, or the
+  // partner reacting) — but only on a real value change, so an in-flight
+  // optimistic tap isn't clobbered by an unrelated re-render.
+  useEffect(() => {
+    setMine(initialMine);
+  }, [initialMine]);
   const theirs = reactions.filter((r) => r.userId !== meId);
 
   if (!canReact) {
@@ -36,13 +42,16 @@ export function Reactions({ targetKind, targetId, reactions = [], meId, canReact
   }
 
   const tap = async (emoji) => {
-    const next = mine === emoji ? null : emoji;
-    setMine(next);
+    const prev = mine;
+    setMine(mine === emoji ? null : emoji); // optimistic
     try {
-      if (onReact) await onReact(emoji);
-      else await api.react(targetKind, targetId, emoji);
+      // Trust the server's result rather than guessing the toggle — this keeps
+      // the highlight in sync even if our view was stale.
+      const res = onReact ? await onReact(emoji) : await api.react(targetKind, targetId, emoji);
+      if (res && Object.prototype.hasOwnProperty.call(res, 'emoji')) setMine(res.emoji ?? null);
+      onChanged?.(); // refresh underlying data so it persists across reopen
     } catch {
-      setMine(initialMine);
+      setMine(prev);
     }
   };
 

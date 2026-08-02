@@ -254,7 +254,7 @@ export function ThisThatView({ question, meId, onClose, onDone, onRefresh }) {
         {mode === 'revealed' && (
           <div className="ttview__react">
             <p className="eyebrow">React</p>
-            <Reactions targetKind="thisthat" targetId={question.id} reactions={tt.reactions || []} meId={meId} canReact />
+            <Reactions targetKind="thisthat" targetId={question.id} reactions={tt.reactions || []} meId={meId} canReact onChanged={onRefresh} />
             <CommentThread
               comments={question.comments || []}
               meId={meId}
@@ -416,7 +416,7 @@ export function GuessView({ question, meId, onClose, onDone, onRefresh }) {
 
       <hr className="rule" />
       <p className="eyebrow">React</p>
-      <Reactions targetKind="reveal" targetId={question.id} reactions={g.reactions || []} meId={meId} canReact />
+      <Reactions targetKind="reveal" targetId={question.id} reactions={g.reactions || []} meId={meId} canReact onChanged={onRefresh} />
       <CommentThread
         comments={question.comments || []}
         meId={meId}

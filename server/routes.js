@@ -440,8 +440,6 @@ router.get('/questions', requireUser, async (req, res) => {
   const ttIds = rows.filter((r) => PICK_KINDS.includes(r.kind)).map((r) => r.id);
   const blindIds = rows.filter((r) => r.kind === 'reveal' || r.kind === 'guess').map((r) => r.id);
   const scoredIds = rows.filter((r) => r.kind === 'predict' || r.kind === 'guess').map((r) => r.id);
-  // Comments live only on games (the blind/pick kinds).
-  const gameIds = [...new Set([...ttIds, ...blindIds])];
   const [attachments, reactions, revealAnswers, thisThatItems, thisThatAnswers, pointsByQ, keepers, comments, partner] = await Promise.all([
     attachmentsFor(qIds, rIds),
     reactionsFor(qIds, rIds),
@@ -450,7 +448,7 @@ router.get('/questions', requireUser, async (req, res) => {
     thisThatAnswersFor(ttIds),
     pointsFor(scoredIds),
     keepersFor(qIds),
-    commentsFor(gameIds),
+    commentsFor(qIds), // comments can live on any finished share, not just games
     partnerOf(req.user.id),
   ]);
   const ctx = { attachments, reactions, revealAnswers, thisThatItems, thisThatAnswers, pointsByQ, keepers, comments, viewerId: req.user.id, partnerId: partner?.id };
@@ -1067,19 +1065,15 @@ router.post('/questions/:id/verdict', requireUser, async (req, res) => {
   res.json({ ok: true, verdict, points: pts });
 });
 
-/* ------------------------------------------------------------- game comments */
+/* ---------------------------------------------------------- share comments */
 
-// A free-form comment on a completed game. Either partner can add one once the
-// game is revealed (status 'answered') — this doesn't touch their locked answer.
-const GAME_KINDS = ['reveal', 'guess', 'this_that', 'predict', 'wyr'];
-
+// A free-form comment on ANY finished share — games and regular shares alike.
+// Either partner can add one once it's acknowledged/complete (status
+// 'answered'); this never touches an answer or the share itself.
 router.post('/questions/:id/comments', requireUser, async (req, res) => {
   const body = (req.body?.body || '').trim().slice(0, 500);
   if (!body) return res.status(400).json({ error: 'Write a comment.' });
-  const { rows } = await query(
-    `SELECT * FROM question WHERE id = $1 AND is_removed = false AND kind = ANY($2::text[])`,
-    [req.params.id, GAME_KINDS]
-  );
+  const { rows } = await query('SELECT * FROM question WHERE id = $1 AND is_removed = false', [req.params.id]);
   const q = rows[0];
   if (!q) return res.status(404).json({ error: 'Not found.' });
   if (q.asker_id !== req.user.id && q.recipient_id !== req.user.id)
