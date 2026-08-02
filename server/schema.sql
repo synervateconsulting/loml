@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS reaction (
 -- Widen the target set on older databases.
 ALTER TABLE reaction DROP CONSTRAINT IF EXISTS reaction_target_kind_check;
 ALTER TABLE reaction
-  ADD CONSTRAINT reaction_target_kind_check CHECK (target_kind IN ('question', 'response', 'reveal', 'event', 'thisthat'));
+  ADD CONSTRAINT reaction_target_kind_check CHECK (target_kind IN ('question', 'response', 'reveal', 'event', 'thisthat', 'list'));
 
 CREATE INDEX IF NOT EXISTS reaction_target_idx ON reaction (target_kind, target_id);
 
@@ -334,6 +334,17 @@ ALTER TABLE list_item ADD COLUMN IF NOT EXISTS state_at TIMESTAMPTZ;
 -- no-ops. Never-checked rows (checked_at null) stay is_done=false / state_at null.
 UPDATE list_item SET is_done = true, state_by = checked_by, state_at = checked_at
   WHERE state_at IS NULL AND checked_at IS NOT NULL;
+
+-- Comments on a whole list (reactions ride on the shared `reaction` table with
+-- target_kind 'list'). Free-form, unlimited, either partner.
+CREATE TABLE IF NOT EXISTS list_comment (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  list_id      UUID NOT NULL REFERENCES list(id),
+  user_id      INTEGER NOT NULL REFERENCES app_user(id),
+  body         TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS list_comment_list_idx ON list_comment (list_id);
 
 -- Keepsakes are now per-person: each of you keeps your own. A share can be kept
 -- by one, both, or neither.

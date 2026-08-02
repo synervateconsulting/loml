@@ -2435,6 +2435,11 @@ body::before {
   font-size: 11px;
   color: var(--muted);
 }
+.listcard__social {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--edge);
+}
 /* create / edit editor */
 .listedit__row {
   display: flex;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { Modal } from './Modals.jsx';
+import { Reactions, CommentThread } from './Reactions.jsx';
 import Confirm, { discardSteps, sendSteps } from './Confirm.jsx';
 
 // Types drive both the create/edit picker and the filter chips.
@@ -28,7 +29,7 @@ function OwnerBadge({ user }) {
   );
 }
 
-export default function ListsView({ users = {} }) {
+export default function ListsView({ meId, users = {} }) {
   const [lists, setLists] = useState(null);
   const [filters, setFilters] = useState(new Set()); // empty = All
   const [editor, setEditor] = useState(null); // { mode:'create'|'edit', list? }
@@ -159,6 +160,19 @@ export default function ListsView({ users = {} }) {
                 Last edited by {nameOf(l.lastEditedBy)} · {fmtWhen(l.lastEditedAt)}
               </p>
             )}
+
+            <div className="listcard__social">
+              <Reactions targetKind="list" targetId={l.id} reactions={l.reactions || []} meId={meId} canReact />
+              <CommentThread
+                comments={l.comments || []}
+                meId={meId}
+                onSubmit={async (body) => {
+                  const c = await api.commentList(l.id, body);
+                  load();
+                  return c;
+                }}
+              />
+            </div>
           </section>
         );
       })}
