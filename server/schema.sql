@@ -314,6 +314,27 @@ CREATE TABLE IF NOT EXISTS list_item (
 
 CREATE INDEX IF NOT EXISTS list_item_list_idx ON list_item (list_id);
 
+-- Lists are typed (Activities / Couple Goals / To-Do / Other) and remember who
+-- last edited them. Existing lists default to 'other'.
+ALTER TABLE list ADD COLUMN IF NOT EXISTS list_type TEXT NOT NULL DEFAULT 'other';
+ALTER TABLE list ADD COLUMN IF NOT EXISTS last_edited_by INTEGER REFERENCES app_user(id);
+ALTER TABLE list ADD COLUMN IF NOT EXISTS last_edited_at TIMESTAMPTZ;
+ALTER TABLE list DROP CONSTRAINT IF EXISTS list_type_check;
+ALTER TABLE list ADD CONSTRAINT list_type_check
+  CHECK (list_type IN ('activities', 'couple_goals', 'to_do', 'other'));
+
+-- Item completion now tracks the LAST state change (done or undone) with who and
+-- when — state_at is null until an item has ever been toggled. checked_by /
+-- checked_at are kept only as the source for the one-time migration below.
+ALTER TABLE list_item ADD COLUMN IF NOT EXISTS is_done BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE list_item ADD COLUMN IF NOT EXISTS state_by INTEGER REFERENCES app_user(id);
+ALTER TABLE list_item ADD COLUMN IF NOT EXISTS state_at TIMESTAMPTZ;
+-- Idempotent: only migrates legacy checked rows that the new system hasn't
+-- touched yet (state_at still null). Once toggled, state_at is set and this
+-- no-ops. Never-checked rows (checked_at null) stay is_done=false / state_at null.
+UPDATE list_item SET is_done = true, state_by = checked_by, state_at = checked_at
+  WHERE state_at IS NULL AND checked_at IS NOT NULL;
+
 -- Keepsakes are now per-person: each of you keeps your own. A share can be kept
 -- by one, both, or neither.
 CREATE TABLE IF NOT EXISTS keepsake (

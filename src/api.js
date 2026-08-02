@@ -64,11 +64,12 @@ export const api = {
   thinkingOfYou: () => request('POST', '/nudge'),
   nudges: () => request('GET', '/nudges'),
   lists: () => request('GET', '/lists'),
-  createList: (title) => request('POST', '/lists', { title }),
-  addListItem: (listId, text) => request('POST', `/lists/${listId}/items`, { text }),
+  // fields: { title, type, items:[text] }
+  createList: (fields) => request('POST', '/lists', fields),
+  // fields: { title, type, items:[{ id?, text, removed? }] }
+  updateList: (id, fields) => request('PATCH', `/lists/${id}`, fields),
   toggleListItem: (id) => request('POST', `/list-items/${id}/toggle`),
   removeList: (id) => request('POST', `/lists/${id}/remove`),
-  removeListItem: (id) => request('POST', `/list-items/${id}/remove`),
   removeAttachment: (id) => request('POST', `/attachments/${id}/remove`),
   history: (questionId) => request('GET', `/questions/${questionId}/history`),
   calendar: () => request('GET', '/calendar'),

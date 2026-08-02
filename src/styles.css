@@ -2288,13 +2288,20 @@ body::before {
 }
 
 /* lists -------------------------------------------------------------------- */
-.lists__new {
+/* Lists: filter bar + New button */
+.lists__head {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
   margin-bottom: 16px;
 }
-.lists__new .field__input {
-  flex: 1;
+.lists__head .calpanes {
+  flex: 1 1 auto;
+}
+.lists__add {
+  margin-left: auto;
+  white-space: nowrap;
 }
 .listcard {
   background: var(--card);
@@ -2305,31 +2312,63 @@ body::before {
 }
 .listcard__head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
   margin-bottom: 10px;
+}
+.listcard__titles {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .listcard__title {
   font-family: var(--display);
   font-size: 17px;
   margin: 0;
-  flex: 1;
+}
+.listtype {
+  font: 600 10.5px var(--body);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  color: var(--night);
+  white-space: nowrap;
+}
+.listtype--activities {
+  background: #9bcf7e;
+}
+.listtype--couple_goals {
+  background: #e8879b;
+}
+.listtype--to_do {
+  background: #f0b26b;
+}
+.listtype--other {
+  background: #9ab6d6;
 }
 .listcard__count {
   color: var(--candle);
   font: 700 13px var(--body);
   font-variant-numeric: tabular-nums;
 }
+.listcard__empty {
+  margin: 0 0 4px;
+}
 .listcard__items {
   list-style: none;
   margin: 0 0 10px;
   padding: 0;
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 .listitem {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
 }
 .listitem__check {
@@ -2337,6 +2376,7 @@ body::before {
   width: 22px;
   height: 22px;
   flex: 0 0 auto;
+  margin-top: 1px;
   border-radius: 7px;
   border: 1.5px solid var(--edge);
   background: var(--night-2);
@@ -2348,25 +2388,77 @@ body::before {
   background: rgba(240, 178, 107, 0.2);
   border-color: rgba(240, 178, 107, 0.5);
 }
-.listitem__text {
+.listitem__main {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.listitem__row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.listitem__text {
   font-size: 14.5px;
+  overflow-wrap: anywhere;
 }
 .listitem.is-checked .listitem__text {
   color: var(--muted);
   text-decoration: line-through;
 }
-.listitem__x {
+.listitem__meta {
+  font-size: 11.5px;
   color: var(--muted);
+}
+/* owner badge (Z / F) */
+.listbadge {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 11px var(--body);
+  color: var(--night);
+}
+.listbadge--a {
+  background: #e8879b;
+}
+.listbadge--b {
+  background: #6ab7c9;
+}
+.listcard__edited {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+/* create / edit editor */
+.listedit__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.listedit__row .field__input {
+  flex: 1;
+}
+.listedit__x {
   font-size: 18px;
   text-decoration: none;
 }
-.listcard__add {
-  display: flex;
-  gap: 8px;
+.listedit__row.is-removed {
+  color: var(--muted);
 }
-.listcard__add .field__input {
+.listedit__struck {
   flex: 1;
+  text-decoration: line-through;
+  font-size: 14px;
+}
+.listedit__add {
+  margin-top: 2px;
 }
 
 /* decks -------------------------------------------------------------------- */

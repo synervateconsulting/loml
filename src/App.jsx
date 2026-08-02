@@ -163,6 +163,19 @@ export default function App() {
 
   const me = session.me;
   const partner = firstName(session.partner?.name || 'them');
+  // Per-user badge meta for lists (initial + a stable colour by ascending id, so
+  // each person looks the same on both devices).
+  const listUsers = (() => {
+    const out = {};
+    const people = [session.me, session.partner].filter(Boolean);
+    people
+      .slice()
+      .sort((a, b) => a.id - b.id)
+      .forEach((u, i) => {
+        out[u.id] = { name: firstName(u.name), initial: (firstName(u.name)[0] || '?').toUpperCase(), color: i === 0 ? 'a' : 'b' };
+      });
+    return out;
+  })();
   // The countdown IS a calendar event; tapping the banner edits that event (or
   // creates a new one and makes it the countdown).
   const countdownEvent = couple?.countdown?.eventId
@@ -501,7 +514,7 @@ export default function App() {
           </>
         )}
 
-        {view === 'lists' && <ListsView />}
+        {view === 'lists' && <ListsView users={listUsers} />}
 
         {view === 'games' && (
           <GamesView
