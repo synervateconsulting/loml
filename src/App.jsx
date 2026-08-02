@@ -483,6 +483,7 @@ export default function App() {
 
         {view === 'games' && (
           <GamesView
+            meId={me.id}
             onUsePrompt={usePrompt}
             onStartThisThat={startThisThat}
             onStartPredict={startPredict}
@@ -508,7 +509,7 @@ export default function App() {
         />
       )}
       {modal?.kind === 'respond' && (
-        <RespondModal question={modal.question} meId={me.id} onClose={close} onDone={finish} />
+        <RespondModal question={modal.question} meId={me.id} onClose={close} onDone={finish} onRefresh={load} />
       )}
       {modal?.kind === 'edit' && (
         <EditQuestionModal question={modal.question} onClose={close} onDone={finish} />
@@ -520,6 +521,7 @@ export default function App() {
           meId={me.id}
           onClose={close}
           onDone={finish}
+          onRefresh={load}
         />
       )}
       {modal?.kind === 'countdown' && (
@@ -535,7 +537,7 @@ export default function App() {
           onChanged={load}
         />
       )}
-      {modal?.kind === 'daily' && <DailyModal daily={daily} onClose={close} onAnswered={finish} />}
+      {modal?.kind === 'daily' && <DailyModal daily={daily} meId={me.id} onClose={close} onAnswered={finish} onRefresh={load} />}
     </div>
   );
 }

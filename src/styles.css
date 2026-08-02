@@ -927,6 +927,151 @@ body::before {
   color: var(--candle);
   font-variant-numeric: tabular-nums;
 }
+.knowmeter--btn {
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  background: var(--card);
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.knowmeter--btn:hover {
+  border-color: var(--candle);
+  background: var(--card-lift);
+}
+
+/* Score breakdown window */
+.scorehero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 0 14px;
+}
+.scorehero__brain {
+  font-size: 30px;
+}
+.scorehero__num {
+  font-family: var(--display);
+  font-size: 42px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--candle);
+  font-variant-numeric: tabular-nums;
+}
+.scorehero__cap {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.scorelegend {
+  list-style: none;
+  margin: 4px 0 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.scorelegend__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.scorelegend__icon {
+  font-size: 17px;
+  line-height: 1.3;
+  flex: none;
+  width: 22px;
+  text-align: center;
+}
+.scorelegend__text {
+  display: flex;
+  flex-direction: column;
+}
+.scorelegend__text b {
+  font-size: 14px;
+}
+.scorelegend__detail {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.scorelist {
+  list-style: none;
+  margin: 4px 0 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.scorerow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+}
+.scorerow.is-removed {
+  opacity: 0.55;
+}
+.scorerow__icon {
+  font-size: 17px;
+  flex: none;
+}
+.scorerow__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.scorerow__title {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scorerow__meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+.scorerow__pts {
+  flex: none;
+  font-weight: 600;
+  color: var(--candle);
+  font-variant-numeric: tabular-nums;
+}
+.scorerow__max {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12px;
+}
+.scoreempty {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 2px 0 16px;
+}
+.scorenote {
+  margin: 2px 0 14px;
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+}
+.scorenote__line {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.scorenote__line + .scorenote__line {
+  margin-top: 4px;
+}
+.scorefoot {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0 0;
+}
 .games__sub {
   font-family: var(--display);
   font-size: 17px;
@@ -1589,6 +1734,48 @@ body::before {
   gap: 8px;
 }
 .commentadd .field__input {
+  flex: 1;
+}
+
+/* Comment thread on games & the daily question */
+.cthread {
+  margin-top: 10px;
+}
+.cthread__list {
+  list-style: none;
+  margin: 4px 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cmt {
+  display: grid;
+  gap: 1px;
+  background: var(--night-2);
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  padding: 7px 10px;
+}
+.cmt--mine {
+  background: var(--card-lift);
+}
+.cmt__who {
+  font: 600 12px var(--body);
+  color: var(--rose);
+}
+.cmt--mine .cmt__who {
+  color: var(--candle);
+}
+.cmt__body {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.cthread__compose {
+  display: flex;
+  gap: 8px;
+}
+.cthread__compose .field__input {
   flex: 1;
 }
 

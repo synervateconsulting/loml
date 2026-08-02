@@ -160,6 +160,18 @@ ALTER TABLE reaction
 
 CREATE INDEX IF NOT EXISTS reaction_target_idx ON reaction (target_kind, target_id);
 
+-- Free-form comments on a completed game (reveal / this_that / predict / wyr /
+-- guess). Either partner can add as many as they like once it's revealed — this
+-- is separate from their blind answer, which stays locked.
+CREATE TABLE IF NOT EXISTS question_comment (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  question_id  UUID NOT NULL REFERENCES question(id),
+  user_id      INTEGER NOT NULL REFERENCES app_user(id),
+  body         TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS question_comment_q_idx ON question_comment (question_id);
+
 -- "This / That" shares: a set of binary picks. Items are the questions; each
 -- person's choices stay blind until BOTH have answered every item (like a
 -- 'reveal', but structured). A 'thisthat' reaction targets the question id.
@@ -216,6 +228,25 @@ CREATE TABLE IF NOT EXISTS daily_answer (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (day, user_id)
 );
+
+-- Reactions and comments on a day's revealed daily question. Keyed by day (the
+-- daily question isn't a `question` row). One live reaction per person per day;
+-- comments are free-form and unlimited, added once both have answered.
+CREATE TABLE IF NOT EXISTS daily_reaction (
+  day          DATE NOT NULL,
+  user_id      INTEGER NOT NULL REFERENCES app_user(id),
+  emoji        TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (day, user_id)
+);
+CREATE TABLE IF NOT EXISTS daily_comment (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  day          DATE NOT NULL,
+  user_id      INTEGER NOT NULL REFERENCES app_user(id),
+  body         TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS daily_comment_day_idx ON daily_comment (day);
 
 -- Which game prompts/templates the two of you have already played. Couple-wide
 -- (this app is a single couple), keyed by a stable id like 'deck:playful:2' or

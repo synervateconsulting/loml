@@ -1,12 +1,25 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import DecksView from './DecksView.jsx';
 import { THISTHAT_TEMPLATES, PREDICT_TEMPLATES, WYR_TEMPLATES, GUESS_PROMPTS } from '../thisthat.js';
 import { templateToItems } from './ThisThat.jsx';
 import { DailyHistory } from './Daily.jsx';
+import { Modal } from './Modals.jsx';
+import { api } from '../api.js';
+
+// How each scored game shows up in the breakdown window.
+const SOURCE_META = {
+  predict: { icon: '🔮', label: 'Predict My Pick' },
+  guess: { icon: '💬', label: 'Guess My Answer' },
+  this_that: { icon: '⚖️', label: 'This / That' },
+  wyr: { icon: '🤔', label: 'Would You Rather' },
+  daily: { icon: '📅', label: 'Daily question' },
+};
+const VERDICT_LABEL = { got_it: 'Got it', close: 'Close', missed: 'Missed' };
 
 // "Games" groups the playful, low-stakes ways to start a share, nesting its own
 // sub-tabs (Decks, This / That, Would You Rather, Guessing) beneath the top nav.
 export default function GamesView({
+  meId,
   onUsePrompt,
   onStartThisThat,
   onStartPredict,
@@ -16,6 +29,7 @@ export default function GamesView({
   knowingPoints = 0,
 }) {
   const [pane, setPane] = useState('decks');
+  const [scoreOpen, setScoreOpen] = useState(false);
   const used = new Set(usedGames);
 
   const tabs = [
@@ -42,10 +56,17 @@ export default function GamesView({
             </button>
           ))}
         </div>
-        <span className="knowmeter" title="Points from Predict & Guess">
+        <button
+          type="button"
+          className="knowmeter knowmeter--btn"
+          onClick={() => setScoreOpen(true)}
+          title="See how your score is calculated"
+        >
           🧠 <b>{knowingPoints}</b>
-        </span>
+        </button>
       </div>
+
+      {scoreOpen && <ScoreBreakdown onClose={() => setScoreOpen(false)} />}
 
       {pane === 'decks' && <DecksView onUsePrompt={onUsePrompt} used={used} />}
 
@@ -195,7 +216,138 @@ export default function GamesView({
         </div>
       )}
 
-      {pane === 'today' && <DailyHistory />}
+      {pane === 'today' && <DailyHistory meId={meId} />}
     </div>
+  );
+}
+
+// The brain-icon window: what the "Knowing You" score is actually counting —
+// the rules, every game that earned points, and what's still in flight.
+function ScoreBreakdown({ onClose }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .gamesScore()
+      .then((d) => alive && setData(d))
+      .catch((e) => alive && setError(e.message));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const entries = data?.entries || [];
+  const pending = data?.pending || {};
+  const pendingNotes = [];
+  if (pending.predictAwaitingReveal)
+    pendingNotes.push(`${pending.predictAwaitingReveal} Predict game${pending.predictAwaitingReveal > 1 ? 's' : ''} will score once you both answer.`);
+  if (pending.guessAwaitingVerdict)
+    pendingNotes.push(`${pending.guessAwaitingVerdict} Guess game${pending.guessAwaitingVerdict > 1 ? 's' : ''} will score once it's judged.`);
+
+  return (
+    <Modal
+      onScrimClick={onClose}
+      eyebrow="Knowing You"
+      title="How your score works"
+      footer={
+        <button type="button" className="btn btn--primary" onClick={onClose}>
+          Got it
+        </button>
+      }
+    >
+      {error && <p className="notice notice--error">{error}</p>}
+      {!data && !error && <p className="prose">Adding it up…</p>}
+
+      {data && (
+        <>
+          <div className="scorehero">
+            <span className="scorehero__brain" aria-hidden="true">🧠</span>
+            <span className="scorehero__num">{data.total}</span>
+            <span className="scorehero__cap">points together</span>
+          </div>
+
+          <p className="field__label">How points are earned</p>
+          <ul className="scorelegend">
+            {(data.legend || []).map((l) => (
+              <li key={l.key} className="scorelegend__row">
+                <span className="scorelegend__icon" aria-hidden="true">{SOURCE_META[l.key]?.icon || '•'}</span>
+                <span className="scorelegend__text">
+                  <b>{l.label}</b>
+                  <span className="scorelegend__detail">{l.detail}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          <p className="field__label">Your games</p>
+          {entries.length === 0 ? (
+            <p className="prose scoreempty">
+              No games have scored yet. Finish a This / That or Would You Rather (you both answer), have your partner
+              guess a Predict, or judge a Guess — and points will land here.
+            </p>
+          ) : (
+            <ul className="scorelist">
+              {entries.map((e) => {
+                const meta = SOURCE_META[e.source] || { icon: '•', label: e.source };
+                return (
+                  <li key={e.questionId} className={`scorerow ${e.isRemoved ? 'is-removed' : ''}`}>
+                    <span className="scorerow__icon" aria-hidden="true">{meta.icon}</span>
+                    <span className="scorerow__body">
+                      <span className="scorerow__title">{e.title || meta.label}</span>
+                      <span className="scorerow__meta">
+                        {meta.label}
+                        {e.source === 'guess' && e.verdict ? ` · ${VERDICT_LABEL[e.verdict] || ''}` : ''}
+                        {e.isSpicy ? ' · 🔥' : ''}
+                        {e.isRemoved ? ' · deleted' : ''}
+                      </span>
+                    </span>
+                    <span className="scorerow__pts">
+                      +{e.points}
+                      {e.maxPoints ? <span className="scorerow__max"> / {e.maxPoints}</span> : null}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          <p className="field__label">Daily ritual</p>
+          <ul className="scorelist">
+            <li className="scorerow">
+              <span className="scorerow__icon" aria-hidden="true">📅</span>
+              <span className="scorerow__body">
+                <span className="scorerow__title">Daily question</span>
+                <span className="scorerow__meta">
+                  {data.daily?.currentStreak > 0
+                    ? `🔥 ${data.daily.currentStreak}-day streak`
+                    : data.daily?.completedDays
+                      ? 'Streak paused — answer today to restart'
+                      : 'Not started yet'}
+                  {data.daily?.completedDays
+                    ? ` · ${data.daily.completedDays} day${data.daily.completedDays > 1 ? 's' : ''} together`
+                    : ''}
+                  {data.daily?.longestStreak > 1 ? ` · best ${data.daily.longestStreak}` : ''}
+                </span>
+              </span>
+              <span className="scorerow__pts">+{data.daily?.points || 0}</span>
+            </li>
+          </ul>
+
+          {pendingNotes.length > 0 && (
+            <div className="scorenote">
+              {pendingNotes.map((n, i) => (
+                <p key={i} className="scorenote__line">⏳ {n}</p>
+              ))}
+            </div>
+          )}
+
+          <p className="scorefoot">
+            Prompt Decks and Together shares are just for connecting — they don’t add to this score.
+          </p>
+        </>
+      )}
+    </Modal>
   );
 }
