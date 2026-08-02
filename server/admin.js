@@ -126,13 +126,123 @@ async function shareCounts(id) {
   };
 }
 
-// Preview: the share + what will cascade with it.
+// Full render data for a share — everything the couple app would show when
+// opened (both people's answers, always revealed, read-only).
+async function buildShareDetail(id) {
+  const q = (await query('SELECT * FROM question WHERE id = $1', [id])).rows[0];
+  if (!q) return null;
+  const users = (await query('SELECT id, display_name FROM app_user')).rows;
+  const nameOf = (uid) => users.find((u) => u.id === uid)?.display_name || `#${uid}`;
+  const d = {
+    id: q.id,
+    kind: q.kind,
+    title: q.title,
+    detail: q.detail,
+    link: q.link || null,
+    artist: q.artist || null,
+    status: q.status,
+    isSpicy: q.is_spicy,
+    isRemoved: q.is_removed,
+    from: nameOf(q.asker_id),
+    to: nameOf(q.recipient_id),
+    createdAt: q.created_at,
+  };
+  const resp = (await query('SELECT body, responder_id FROM response WHERE question_id = $1 AND is_removed = false', [id])).rows[0];
+  if (resp) d.response = { name: nameOf(resp.responder_id), body: resp.body };
+
+  if (q.kind === 'reveal' || q.kind === 'guess') {
+    const ans = (await query('SELECT user_id, body FROM reveal_answer WHERE question_id = $1', [id])).rows;
+    const bodyOf = (uid) => ans.find((a) => a.user_id === uid)?.body ?? null;
+    if (q.kind === 'reveal') {
+      d.reveal = {
+        askerName: nameOf(q.asker_id),
+        askerBody: bodyOf(q.asker_id),
+        recipientName: nameOf(q.recipient_id),
+        recipientBody: bodyOf(q.recipient_id),
+      };
+    } else {
+      d.guess = {
+        truthName: nameOf(q.asker_id),
+        truthBody: bodyOf(q.asker_id),
+        guessName: nameOf(q.recipient_id),
+        guessBody: bodyOf(q.recipient_id),
+        verdict: q.guess_verdict || null,
+      };
+    }
+  }
+
+  if (['this_that', 'predict', 'wyr'].includes(q.kind)) {
+    const items = (
+      await query(
+        'SELECT id, position, left_label, right_label, left_icon, right_icon FROM thisthat_item WHERE question_id = $1 ORDER BY position',
+        [id]
+      )
+    ).rows;
+    const ans = (await query('SELECT item_id, user_id, choice, note FROM thisthat_answer WHERE question_id = $1', [id])).rows;
+    const cell = (itemId, uid) => ans.find((a) => a.item_id === itemId && a.user_id === uid);
+    d.pick = {
+      kind: q.kind,
+      askerName: nameOf(q.asker_id),
+      recipientName: nameOf(q.recipient_id),
+      items: items.map((it) => ({
+        id: it.id,
+        leftLabel: it.left_label,
+        rightLabel: it.right_label,
+        leftIcon: it.left_icon || '',
+        rightIcon: it.right_icon || '',
+        askerChoice: cell(it.id, q.asker_id)?.choice ?? null,
+        recipientChoice: cell(it.id, q.recipient_id)?.choice ?? null,
+        askerNote: cell(it.id, q.asker_id)?.note || '',
+        recipientNote: cell(it.id, q.recipient_id)?.note || '',
+      })),
+    };
+  }
+  return d;
+}
+
+// Preview: the full app-style render + what will cascade with it.
 router.get('/share/:id', async (req, res) => {
-  const { rows } = await query('SELECT id, kind, title, is_spicy, status, is_removed FROM question WHERE id = $1', [
-    req.params.id,
-  ]);
-  if (!rows[0]) return res.status(404).json({ error: 'Not found.' });
-  res.json({ share: rows[0], counts: await shareCounts(req.params.id) });
+  const detail = await buildShareDetail(req.params.id);
+  if (!detail) return res.status(404).json({ error: 'Not found.' });
+  res.json({ detail, counts: await shareCounts(req.params.id) });
+});
+
+// Full render data for a calendar event.
+router.get('/event/:id', async (req, res) => {
+  const e = (
+    await query(
+      "SELECT id, kind, title, to_char(starts_at, 'YYYY-MM-DD\"T\"HH24:MI') AS starts_at, all_day, location, description, is_removed, created_by FROM calendar_event WHERE id = $1",
+      [req.params.id]
+    )
+  ).rows[0];
+  if (!e) return res.status(404).json({ error: 'Not found.' });
+  const users = (await query('SELECT id, display_name FROM app_user')).rows;
+  const nameOf = (uid) => users.find((u) => u.id === uid)?.display_name || `#${uid}`;
+  const comments = (
+    await query(
+      'SELECT body, user_id, to_char(created_at, \'Mon DD\') AS at FROM event_comment WHERE event_id = $1 AND is_removed = false ORDER BY created_at',
+      [req.params.id]
+    )
+  ).rows.map((c) => ({ name: nameOf(c.user_id), body: c.body, at: c.at }));
+  const counts = {
+    comments: comments.length,
+    reactions: (await query("SELECT count(*)::int n FROM reaction WHERE target_kind='event' AND target_id=$1", [req.params.id])).rows[0].n,
+  };
+  res.json({
+    detail: {
+      id: e.id,
+      kind: e.kind,
+      title: e.title,
+      startsAt: e.starts_at,
+      allDay: e.all_day,
+      location: e.location,
+      description: e.description,
+      isRemoved: e.is_removed,
+      createdBy: nameOf(e.created_by),
+      comments,
+    },
+    counts,
+  });
 });
 
 router.delete('/share/:id', async (req, res) => {

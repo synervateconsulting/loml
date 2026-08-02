@@ -21,6 +21,7 @@ export const admin = {
   logout: () => request('POST', '/admin/logout'),
   overview: () => request('GET', '/admin/overview'),
   sharePreview: (id) => request('GET', `/admin/share/${id}`),
+  eventPreview: (id) => request('GET', `/admin/event/${id}`),
   deleteShare: (id) => request('DELETE', `/admin/share/${id}`),
   deleteDaily: (day, userId) => request('DELETE', `/admin/daily?day=${day}${userId ? `&userId=${userId}` : ''}`),
   deleteEvent: (id) => request('DELETE', `/admin/event/${id}`),
