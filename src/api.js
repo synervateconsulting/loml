@@ -40,6 +40,7 @@ export const api = {
   daily: () => request('GET', '/daily'),
   dailyHistory: () => request('GET', '/daily/history'),
   answerDaily: (body) => request('POST', '/daily', { body }),
+  editDaily: (body) => request('PATCH', '/daily', { body }),
   selectCountdown: (eventId) => request('POST', '/couple/countdown/select', { eventId }),
   thinkingOfYou: () => request('POST', '/nudge'),
   nudges: () => request('GET', '/nudges'),

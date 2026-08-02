@@ -88,6 +88,7 @@ export function DailyModal({ daily, onClose, onAnswered }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [editing, setEditing] = useState(false);
   if (!daily) return null;
 
   const submit = async () => {
@@ -97,6 +98,20 @@ export function DailyModal({ daily, onClose, onAnswered }) {
     setError('');
     try {
       await api.answerDaily(body);
+      await onAnswered();
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  };
+
+  const saveEdit = async () => {
+    const body = text.trim();
+    if (!body) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api.editDaily(body);
       await onAnswered();
     } catch (err) {
       setError(err.message);
@@ -129,18 +144,50 @@ export function DailyModal({ daily, onClose, onAnswered }) {
     );
   }
 
-  // Waiting
+  // Answered, still blind — editable until the partner answers.
   if (!daily.revealed) {
+    if (editing) {
+      return (
+        <Modal
+          onScrimClick={() => setEditing(false)}
+          eyebrow="🗓️ Today’s question"
+          title={daily.prompt}
+          footer={
+            <>
+              <button type="button" className="btn btn--ghost" onClick={() => setEditing(false)}>Cancel</button>
+              <button type="button" className="btn btn--primary" disabled={!text.trim() || busy} onClick={saveEdit}>Save</button>
+            </>
+          }
+        >
+          <p className="hint">You can edit until {daily.partnerName} answers.</p>
+          <label className="field">
+            <span className="field__label">Your answer</span>
+            <textarea className="field__input field__input--area" rows={4} value={text} onChange={(e) => setText(e.target.value)} />
+          </label>
+          {error && <p className="notice notice--error">{error}</p>}
+        </Modal>
+      );
+    }
     return (
       <Modal
         onScrimClick={onClose}
         eyebrow="🗓️ Today’s question"
         title={daily.prompt}
-        footer={<div className="sheet__foot--split"><span className="hint">{daily.streak > 0 ? `🔥 ${daily.streak}` : ''}</span><button type="button" className="btn btn--ghost" onClick={onClose}>Close</button></div>}
+        footer={
+          <div className="sheet__foot--split">
+            <button type="button" className="linkbtn" onClick={() => { setText(daily.myBody || ''); setError(''); setEditing(true); }}>
+              Edit answer
+            </button>
+            <button type="button" className="btn btn--ghost" onClick={onClose}>Close</button>
+          </div>
+        }
       >
         <p className="eyebrow">Your answer</p>
         <p className="prose prose--answer">{daily.myBody || '—'}</p>
-        <p className="hint">Waiting on {daily.partnerName} to answer — then you’ll both see each other’s.</p>
+        <p className="hint">
+          Waiting on {daily.partnerName} to answer — you can still edit yours until they do.
+          {daily.streak > 0 ? ` · 🔥 ${daily.streak}` : ''}
+        </p>
       </Modal>
     );
   }
