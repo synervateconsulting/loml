@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { actionLabel, isReveal, isThisThat, isPickGame, isGuess } from './shares.js';
+import { missingPlayedKeys } from './playedBackfill.js';
 import { pushSupported, permission, enablePush, syncBadge, clearDeliveredNotifications } from './push.js';
 import { eventIcon } from './calendar.js';
 import Login from './components/Login.jsx';
@@ -42,6 +43,7 @@ export default function App() {
   const [keepFilter, setKeepFilter] = useState('either'); // either | both | mine | theirs
   const [resynced, setResynced] = useState(false);
   const [spicyRevealed, setSpicyRevealed] = useState(false);
+  const playedReconciled = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -87,6 +89,26 @@ export default function App() {
   useEffect(() => {
     if (view !== 'spicy') setSpicyRevealed(false);
   }, [view]);
+
+  // One-time: tag templates that were played before the "Played" feature — match
+  // existing games to their templates and register any missing keys. Self-heals:
+  // once written they come back in usedGames, so there's nothing left to do.
+  useEffect(() => {
+    if (playedReconciled.current || !session?.me) return;
+    const all = [...(data.asked || []), ...(data.received || [])];
+    if (!all.length) return; // wait until games have loaded
+    playedReconciled.current = true;
+    const missing = missingPlayedKeys(all, usedGames);
+    if (!missing.length) return;
+    api
+      .markPlayed(missing)
+      .then((r) => {
+        if (r?.added) setUsedGames((prev) => [...new Set([...prev, ...missing])]);
+      })
+      .catch(() => {
+        playedReconciled.current = false; // allow a retry on the next load
+      });
+  }, [session, data, usedGames]);
 
   // Reconcile the badge (and clear stray notifications) whenever the app comes
   // back to the foreground — this heals a stuck badge after you've handled

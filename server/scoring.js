@@ -19,7 +19,7 @@ import { appToday } from './daily.js';
 export const SCORE_WEIGHTS = {
   this_that: { complete: 5 },
   wyr: { complete: 5 },
-  reveal: { complete: 4 },
+  reveal: { complete: 2 },
   predict: { complete: 3, perCorrect: 3 },
   guess: { got_it: 10, close: 5, missed: 2 },
 };

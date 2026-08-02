@@ -1366,6 +1366,30 @@ router.get('/games/used', requireUser, async (_req, res) => {
   res.json({ keys: used.rows.map((r) => r.game_key), knowingPoints: total });
 });
 
+// Mark templates as played. Used by the client's one-time reconciliation to tag
+// games that were played before the "Played" feature existed — the client
+// matches existing shares to their templates and sends the missing keys here.
+const PLAYED_PREFIXES = ['deck:', 'tt:', 'pt:', 'wyr:', 'guess:'];
+router.post('/games/used', requireUser, async (req, res) => {
+  const raw = Array.isArray(req.body?.keys) ? req.body.keys : [];
+  const keys = [
+    ...new Set(
+      raw
+        .map((k) => String(k || '').trim().slice(0, 120))
+        .filter((k) => PLAYED_PREFIXES.some((p) => k.startsWith(p)))
+    ),
+  ].slice(0, 500);
+  let added = 0;
+  for (const key of keys) {
+    const r = await query(
+      'INSERT INTO game_used (game_key, used_by) VALUES ($1, $2) ON CONFLICT (game_key) DO NOTHING',
+      [key, req.user.id]
+    );
+    added += r.rowCount;
+  }
+  res.json({ ok: true, added });
+});
+
 // A breakdown of the "Knowing You" score: every game that actually earned
 // points (with how many and why), plus games still in flight that will score
 // once they're finished. This is what the brain-icon window reads so a person

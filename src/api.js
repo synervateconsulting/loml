@@ -55,6 +55,7 @@ export const api = {
   couple: () => request('GET', '/couple'),
   gamesUsed: () => request('GET', '/games/used'),
   gamesScore: () => request('GET', '/games/score'),
+  markPlayed: (keys) => request('POST', '/games/used', { keys }),
   daily: () => request('GET', '/daily'),
   dailyHistory: () => request('GET', '/daily/history'),
   answerDaily: (body) => request('POST', '/daily', { body }),
