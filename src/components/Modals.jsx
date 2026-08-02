@@ -775,6 +775,11 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone, onRe
 
   const original = question.response?.body ?? '';
   const [body, setBody] = useState(original);
+  // The answer currently shown in read-only mode (updates in place after a save).
+  const [displayBody, setDisplayBody] = useState(original);
+  // Editing your own reply is gated behind a view-only screen: open read-only,
+  // tap Edit to reveal the editor (matches how non-editable shares look).
+  const [editing, setEditing] = useState(false);
   const [staged, setStaged] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -791,9 +796,28 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone, onRe
   const theirReplyLabel = `${question.recipientName} ${settledWord(question)}`;
   const emptyReply = question_ ? 'No words with this one.' : 'Acknowledged — no note added.';
 
-  const textDirty = canEditAnswer && body !== original;
-  const dirty = textDirty || (canEditAnswer && staged.length > 0);
-  const cancel = () => (dirty ? ask(discardSteps('edit'), onClose) : onClose());
+  const showEditor = canEditAnswer && editing;
+  const textDirty = editing && body !== displayBody;
+  const dirty = textDirty || (editing && staged.length > 0);
+
+  const enterEdit = () => {
+    setBody(displayBody);
+    setStaged([]);
+    savedText.current = false;
+    setError('');
+    setEditing(true);
+  };
+  const exitEdit = () => {
+    setBody(displayBody);
+    setStaged([]);
+    savedText.current = false;
+    setError('');
+    setEditing(false);
+  };
+  // Cancel out of the editor (confirm only if there are unsaved changes).
+  const cancelEdit = () => (dirty ? ask(discardSteps('edit'), exitEdit) : exitEdit());
+  // Leaving the modal: from the editor, treat like Cancel; from read-only, close.
+  const leave = () => (showEditor ? cancelEdit() : onClose());
 
   const save = () =>
     ask(sendSteps('Save these changes?', 'The earlier version is kept in the history.'), async () => {
@@ -805,7 +829,11 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone, onRe
           savedText.current = true;
         }
         await uploadStaged({ staged, setStaged, ownerKind: 'response', responseId: question.response.id });
-        onDone();
+        setDisplayBody(body); // reflect the saved answer back in the read-only view
+        savedText.current = false;
+        setBusy(false);
+        setEditing(false); // return to the view-only screen
+        onRefresh?.(); // refresh the board in the background (modal stays open)
       } catch (err) {
         setError(err.message);
         setBusy(false);
@@ -825,7 +853,7 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone, onRe
   return (
     <>
       <Modal
-        onScrimClick={cancel}
+        onScrimClick={leave}
         eyebrow={
           canEditAnswer
             ? question_
@@ -840,13 +868,26 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone, onRe
           <div className="sheet__foot--split">
             <KeepsakeStar question={question} />
             <div className="sheet__foot--right">
-              <button type="button" className="btn btn--ghost" onClick={cancel}>
-                {dirty ? 'Cancel' : 'Close'}
-              </button>
-              {canEditAnswer && (
-                <button type="button" className="btn btn--primary" onClick={save} disabled={!dirty || busy}>
-                  Save changes
-                </button>
+              {showEditor ? (
+                <>
+                  <button type="button" className="btn btn--ghost" onClick={cancelEdit}>
+                    Cancel
+                  </button>
+                  <button type="button" className="btn btn--primary" onClick={save} disabled={!dirty || busy}>
+                    Save changes
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button type="button" className="btn btn--ghost" onClick={onClose}>
+                    Close
+                  </button>
+                  {canEditAnswer && (
+                    <button type="button" className="btn btn--primary" onClick={enterEdit}>
+                      Edit
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -864,7 +905,7 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone, onRe
         />
         <hr className="rule" />
         <p className="eyebrow">{canEditAnswer ? yourReplyLabel : theirReplyLabel}</p>
-        {canEditAnswer ? (
+        {showEditor ? (
           <textarea
             className="field__input field__input--area"
             rows={8}
@@ -873,9 +914,9 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone, onRe
             onChange={(e) => setBody(e.target.value)}
           />
         ) : (
-          <p className="prose prose--answer">{original || emptyReply}</p>
+          <p className="prose prose--answer">{(canEditAnswer ? displayBody : original) || emptyReply}</p>
         )}
-        <Attachments items={question.response?.attachments} onRemove={canEditAnswer ? removeAttachment : undefined} />
+        <Attachments items={question.response?.attachments} onRemove={showEditor ? removeAttachment : undefined} />
         {question.response && (
           <Reactions
             targetKind="response"
@@ -888,7 +929,7 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone, onRe
         {canEditAnswer && question.response?.seenAt && (
           <p className="seenline">Seen by {question.askerName}</p>
         )}
-        {canEditAnswer && (
+        {showEditor && (
           <div className="field">
             <span className="field__label">Add voice, video or a file</span>
             <MediaCapture items={staged} onChange={setStaged} disabled={busy} />
