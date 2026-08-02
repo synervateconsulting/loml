@@ -14,9 +14,12 @@ import { appToday } from './daily.js';
 //     partner guesses right (this is the game about knowing each other).
 //   - Guess My Answer: scored by the author's verdict, with a floor for a miss
 //     so playing still counts.
+//   - Decks (a 'reveal' / answer-together share): one free-form question you
+//     both answer, no right/wrong — a medium flat reward for completing it.
 export const SCORE_WEIGHTS = {
   this_that: { complete: 5 },
   wyr: { complete: 5 },
+  reveal: { complete: 4 },
   predict: { complete: 3, perCorrect: 3 },
   guess: { got_it: 10, close: 5, missed: 2 },
 };
@@ -37,6 +40,9 @@ export function pickPoints(kind, matches = 0) {
 
 // Weighted points for a judged guess.
 export const guessPoints = (verdict) => SCORE_WEIGHTS.guess[verdict] ?? 0;
+
+// Flat points for completing a deck / answer-together share (both answered).
+export const revealPoints = () => SCORE_WEIGHTS.reveal.complete;
 
 // The most a single game of each kind could earn, for "3 / 12" style progress.
 export const maxPointsFor = (kind, items = 0) => {
@@ -60,6 +66,7 @@ export const SCORE_LEGEND = [
   },
   { key: 'this_that', label: 'This / That', detail: `+${SCORE_WEIGHTS.this_that.complete} for playing it through together` },
   { key: 'wyr', label: 'Would You Rather', detail: `+${SCORE_WEIGHTS.wyr.complete} for playing it through together` },
+  { key: 'reveal', label: 'Decks', detail: `+${SCORE_WEIGHTS.reveal.complete} for answering a deck prompt together` },
   {
     key: 'daily',
     label: 'Daily question',
@@ -147,6 +154,22 @@ export async function backfillScores() {
          ON CONFLICT (question_id) DO UPDATE SET points = EXCLUDED.points, source = EXCLUDED.source
         WHERE game_points.points IS DISTINCT FROM EXCLUDED.points OR game_points.source IS DISTINCT FROM EXCLUDED.source`,
       [p.id, p.kind, points]
+    );
+    touched += r.rowCount;
+  }
+
+  // Decks (answer-together shares) both people have answered.
+  const { rows: reveals } = await query(
+    `SELECT q.id, (SELECT count(*)::int FROM reveal_answer ra WHERE ra.question_id = q.id) AS n
+       FROM question q WHERE q.kind = 'reveal' AND q.is_removed = false`
+  );
+  for (const rv of reveals) {
+    if (rv.n < 2) continue; // not revealed yet
+    const r = await query(
+      `INSERT INTO game_points (question_id, source, points) VALUES ($1, 'reveal', $2)
+         ON CONFLICT (question_id) DO UPDATE SET points = EXCLUDED.points, source = EXCLUDED.source
+        WHERE game_points.points IS DISTINCT FROM EXCLUDED.points OR game_points.source IS DISTINCT FROM EXCLUDED.source`,
+      [rv.id, revealPoints()]
     );
     touched += r.rowCount;
   }
