@@ -120,6 +120,12 @@ CREATE TABLE IF NOT EXISTS attachment (
 CREATE INDEX IF NOT EXISTS attachment_question_idx ON attachment (question_id);
 CREATE INDEX IF NOT EXISTS attachment_response_idx ON attachment (response_id);
 
+-- Attachments can live in object storage (R2) instead of Postgres bytea. `bytes`
+-- is nullable once a row is stored in R2; `storage` says where the file is.
+ALTER TABLE attachment ADD COLUMN IF NOT EXISTS storage TEXT NOT NULL DEFAULT 'db'; -- 'db' | 'r2'
+ALTER TABLE attachment ADD COLUMN IF NOT EXISTS storage_key TEXT;                   -- R2 object key
+ALTER TABLE attachment ALTER COLUMN bytes DROP NOT NULL;
+
 -- Append-only trail of everything that happened.
 CREATE TABLE IF NOT EXISTS activity_log (
   id           BIGSERIAL PRIMARY KEY,

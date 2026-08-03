@@ -41,7 +41,7 @@ function pickMime(candidates) {
 const hasCamera = () => typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
 const canRecord = () => hasCamera() && typeof MediaRecorder !== 'undefined';
 
-export default function MediaCapture({ items, onChange, maxBytes = 60 * MB, disabled = false }) {
+export default function MediaCapture({ items, onChange, maxBytes = 500 * MB, disabled = false }) {
   // 'idle' | 'audio' | 'video-armed' | 'video-rec' | 'photo'
   const [mode, setMode] = useState('idle');
   const [elapsed, setElapsed] = useState(0);
