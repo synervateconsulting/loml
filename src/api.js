@@ -93,30 +93,22 @@ export const api = {
   cancelDateRequest: (id) => request('POST', `/date-requests/${id}/cancel`),
   ackEventNotification: (id) => request('POST', `/calendar/notifications/${id}/ack`),
   // Upload one attachment. Oversized photos are downscaled first (capped
-  // compression); the file goes DIRECT to R2 via a presigned PUT when object
-  // storage is enabled (falling back to a legacy multipart POST otherwise).
-  // Real progress is reported via onProgress(pct); transient failures retry with
-  // backoff (large files once); `signal` cancels an in-flight upload.
+  // compression). Large files (> MULTIPART) go up as a RESUMABLE R2 multipart
+  // upload (a dropped part retries without restarting the whole file); smaller
+  // files use a single presigned PUT. Both fall back to a legacy multipart POST
+  // when object storage is off. Progress via onProgress(pct); `signal` cancels.
   uploadAttachment: async ({ ownerKind, questionId, responseId, file, fileName, mimeType, durationSecs, onProgress, signal }) => {
     const toSend = await maybeCompressImage(file);
     const name = fileName || toSend.name || file.name || 'recording';
     const type = mimeType || toSend.type || file.type || '';
     const payload = type ? new File([toSend], name, { type }) : toSend;
+    const meta = { ownerKind, questionId, responseId, fileName: name, mimeType: type, durationSecs };
+    const MULTIPART = 20 * 1024 * 1024;
 
-    // Big files (videos) aren't auto-retried — re-sending the whole thing on a
-    // flaky link just burns data; the user can retry manually.
-    const LARGE = 15 * 1024 * 1024;
-    const attempts = payload.size > LARGE ? 1 : 3;
-
-    const pre = await request('POST', '/attachments/presign', {
-      ownerKind,
-      questionId,
-      responseId,
-      byteSize: payload.size,
-    });
-
-    // Legacy fallback: object storage not configured → multipart POST to us.
-    if (pre?.enabled === false) {
+    const legacy = () => {
+      // Big files aren't auto-retried on the legacy path (re-buffering wastes
+      // data); small files retry through transient failures.
+      const attempts = payload.size > 15 * 1024 * 1024 ? 1 : 3;
       return withUploadRetry(attempts, onProgress, () => {
         const form = new FormData();
         form.append('ownerKind', ownerKind);
@@ -125,24 +117,71 @@ export const api = {
         if (durationSecs != null) form.append('durationSecs', String(durationSecs));
         form.append('file', payload, name);
         return xhrSend({ method: 'POST', url: '/api/attachments', body: form, credentials: true, onProgress, signal, parse: true });
-      });
+      }).then((r) => r.data);
+    };
+
+    if (payload.size > MULTIPART) {
+      const init = await request('POST', '/attachments/multipart/init', { ...meta, byteSize: payload.size });
+      if (init?.enabled === false) return legacy();
+      return multipartUpload(payload, init, meta, onProgress, signal);
     }
 
-    // R2: PUT straight to the presigned URL, then record it server-side.
+    const pre = await request('POST', '/attachments/presign', { ownerKind, questionId, responseId, byteSize: payload.size });
+    if (pre?.enabled === false) return legacy();
+    // Single presigned PUT straight to R2, then record it.
+    const attempts = payload.size > 15 * 1024 * 1024 ? 1 : 3;
     await withUploadRetry(attempts, onProgress, () =>
       xhrSend({ method: 'PUT', url: pre.url, body: payload, credentials: false, onProgress, signal })
     );
-    return request('POST', '/attachments/complete', {
-      ownerKind,
-      questionId,
-      responseId,
-      key: pre.key,
-      fileName: name,
-      mimeType: type,
-      durationSecs,
-    });
+    return request('POST', '/attachments/complete', { ...meta, key: pre.key });
   },
 };
+
+// Resumable multipart to R2: slice the file into parts; each part is presigned,
+// PUT directly to R2, and retried on its own — so a mid-upload drop resumes from
+// the last good part instead of restarting. Progress aggregates across parts.
+async function multipartUpload(payload, init, meta, onProgress, signal) {
+  const { key, uploadId, partSize } = init;
+  const partCount = Math.ceil(payload.size / partSize);
+  const parts = [];
+  let uploadedBytes = 0;
+  try {
+    for (let n = 1; n <= partCount; n++) {
+      if (signal?.aborted) {
+        const e = new Error('Upload cancelled.');
+        e.cancelled = true;
+        throw e;
+      }
+      const start = (n - 1) * partSize;
+      const end = Math.min(payload.size, start + partSize);
+      const chunk = payload.slice(start, end);
+      const base = uploadedBytes;
+      const { etag } = await withUploadRetry(3, null, async () => {
+        const { url } = await request('POST', '/attachments/multipart/part', { key, uploadId, partNumber: n });
+        return xhrSend({
+          method: 'PUT',
+          url,
+          body: chunk,
+          credentials: false,
+          signal,
+          onProgress: (pct) => {
+            const loaded = base + (pct / 100) * (end - start);
+            onProgress?.(Math.round((loaded / payload.size) * 100));
+          },
+        });
+      });
+      if (!etag) throw new Error('Upload failed (missing part ETag — check R2 CORS ExposeHeaders).');
+      parts.push({ partNumber: n, etag });
+      uploadedBytes = end;
+      onProgress?.(Math.round((uploadedBytes / payload.size) * 100));
+    }
+  } catch (err) {
+    // Best-effort: don't leave orphan parts in R2.
+    request('POST', '/attachments/multipart/abort', { key, uploadId }).catch(() => {});
+    throw err;
+  }
+  return request('POST', '/attachments/multipart/complete', { ...meta, key, uploadId, parts });
+}
 
 async function withUploadRetry(attempts, onProgress, fn) {
   for (let i = 0; ; i++) {
@@ -207,7 +246,7 @@ function xhrSend({ method, url, body, credentials, onProgress, signal, parse }) 
             /* empty body is fine */
           }
         }
-        resolve(data);
+        resolve({ data, etag: xhr.getResponseHeader('ETag') });
       } else {
         let data = null;
         try {
