@@ -170,10 +170,11 @@ CREATE TABLE IF NOT EXISTS reaction (
   UNIQUE (user_id, target_kind, target_id)
 );
 
--- Widen the target set on older databases.
+-- target_kind is app-validated (see the /reactions allowlist in routes.js). We
+-- keep NO db CHECK on it: a narrow re-added check is not idempotent — once rows
+-- of a newer kind exist, re-adding a check that omits that kind fails on reboot
+-- and aborts startup. Dropping it (like attachment.owner_kind) is future-proof.
 ALTER TABLE reaction DROP CONSTRAINT IF EXISTS reaction_target_kind_check;
-ALTER TABLE reaction
-  ADD CONSTRAINT reaction_target_kind_check CHECK (target_kind IN ('question', 'response', 'reveal', 'event', 'thisthat', 'list'));
 
 CREATE INDEX IF NOT EXISTS reaction_target_idx ON reaction (target_kind, target_id);
 
@@ -512,12 +513,10 @@ INSERT INTO comment (id, target_type, target_id, user_id, body, created_at, edit
   ON CONFLICT (id) DO NOTHING;
 
 -- Reactions become universal: target_id widens to TEXT so day-keyed daily
--- reactions live in the same table, and the kind check is permissive.
+-- reactions live in the same table. The kind check is dropped above (and stays
+-- dropped) — kinds are validated in the app, so new ones need no migration.
 ALTER TABLE reaction ALTER COLUMN target_id TYPE TEXT;
 ALTER TABLE reaction DROP CONSTRAINT IF EXISTS reaction_target_kind_check;
-ALTER TABLE reaction
-  ADD CONSTRAINT reaction_target_kind_check
-  CHECK (target_kind IN ('question', 'response', 'reveal', 'event', 'thisthat', 'list', 'daily'));
 -- Fold daily_reaction into the reaction table (day as the text target_id).
 INSERT INTO reaction (user_id, target_kind, target_id, emoji, created_at)
   SELECT user_id, 'daily', to_char(day, 'YYYY-MM-DD'), emoji, created_at FROM daily_reaction
