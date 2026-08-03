@@ -4,7 +4,16 @@ import { query, keyMatches, logActivity, pool } from './db.js';
 import { startSession, endSession, requireUser, partnerOf } from './auth.js';
 import { publicKey, saveSubscription, notify } from './push.js';
 import { promptForDay, appToday } from './daily.js';
-import { pickPoints, guessPoints, revealPoints, maxPointsFor, SCORE_LEGEND, computeDailyScore, knowingTotal } from './scoring.js';
+import {
+  pickPoints,
+  guessPoints,
+  revealPoints,
+  maxPointsFor,
+  SCORE_LEGEND,
+  computeDailyScore,
+  computeCouponScore,
+  knowingTotal,
+} from './scoring.js';
 import {
   r2Enabled,
   newOriginalKey,
@@ -1308,6 +1317,14 @@ async function authorizeComment(user, targetType, targetId) {
     if (!rows[0]) return { status: 404, error: 'Event not found.' };
     return { onCreated: () => notifyEvent(targetId, asUser(user.id, user.display_name), 'commented', rows[0].title) };
   }
+  if (targetType === 'coupon') {
+    const { rows } = await query('SELECT from_id, to_id, title FROM coupon WHERE id = $1 AND is_removed = false', [targetId]);
+    const c = rows[0];
+    if (!c) return { status: 404, error: 'Not found.' };
+    if (c.from_id !== user.id && c.to_id !== user.id) return { status: 403, error: "This isn't yours." };
+    const other = c.from_id === user.id ? c.to_id : c.from_id;
+    return { onCreated: (body) => notify(other, { title: `${user.display_name} commented on a coupon`, body }) };
+  }
   return { status: 400, error: 'Unknown comment target.' };
 }
 
@@ -1625,7 +1642,7 @@ router.get('/games/score', requireUser, async (_req, res) => {
   // scored only once both people have answered (status flips to 'answered'); a
   // guess is scored only once the author judges it; a deck scores once both
   // have answered it.
-  const [predictOpen, guessUnjudged, revealOpen, daily] = await Promise.all([
+  const [predictOpen, guessUnjudged, revealOpen, daily, coupons] = await Promise.all([
     query(
       "SELECT count(*)::int AS n FROM question WHERE kind = 'predict' AND is_removed = false AND status <> 'answered'"
     ),
@@ -1638,13 +1655,15 @@ router.get('/games/score', requireUser, async (_req, res) => {
       "SELECT count(*)::int AS n FROM question WHERE kind = 'reveal' AND is_removed = false AND status <> 'answered'"
     ),
     computeDailyScore(),
+    computeCouponScore(),
   ]);
 
   const gamesTotal = entries.reduce((sum, e) => sum + e.points, 0);
   res.json({
-    total: gamesTotal + daily.points,
+    total: gamesTotal + daily.points + coupons.points,
     entries,
     daily,
+    coupons,
     legend: SCORE_LEGEND,
     pending: {
       predictAwaitingReveal: predictOpen.rows[0].n,
@@ -1660,7 +1679,7 @@ const REACTION_EMOJI = ['❤️', '🔥', '😈', '😂', '🥹', '👀'];
 
 router.post('/reactions', requireUser, async (req, res) => {
   const { targetKind, targetId, emoji } = req.body || {};
-  if (!['question', 'response', 'reveal', 'event', 'thisthat', 'list', 'daily'].includes(targetKind))
+  if (!['question', 'response', 'reveal', 'event', 'thisthat', 'list', 'daily', 'coupon'].includes(targetKind))
     return res.status(400).json({ error: 'Bad target.' });
 
   // Confirm the target is part of a share you're in, and figure out whether
@@ -1684,6 +1703,9 @@ router.post('/reactions', requireUser, async (req, res) => {
   } else if (targetKind === 'daily') {
     // The daily question is shared once both have answered that day.
     if (/^\d{4}-\d{2}-\d{2}$/.test(String(targetId)) && (await dailyRevealed(String(targetId)))) member = true;
+  } else if (targetKind === 'coupon') {
+    const { rows } = await query('SELECT from_id, to_id FROM coupon WHERE id = $1 AND is_removed = false', [targetId]);
+    if (rows[0] && (rows[0].from_id === req.user.id || rows[0].to_id === req.user.id)) member = true;
   } else if (targetKind === 'question') {
     const { rows } = await query('SELECT asker_id, recipient_id FROM question WHERE id = $1', [targetId]);
     const q = rows[0];
@@ -2302,6 +2324,81 @@ router.post('/date-requests/:id/cancel', requireUser, async (req, res) => {
     [req.user.id, r.id]
   );
   notify(r.recipient_id, { title: `${req.user.display_name} withdrew a date request`, body: r.title });
+  res.json({ ok: true });
+});
+
+/* ------------------------------------------------------------- coupons */
+
+router.get('/coupons', requireUser, async (req, res) => {
+  const { rows } = await query(
+    `SELECT c.id, c.from_id, c.to_id, c.title, c.note, c.icon, c.status, c.redeemed_at, c.created_at,
+            f.display_name AS from_name, t.display_name AS to_name
+       FROM coupon c JOIN app_user f ON f.id = c.from_id JOIN app_user t ON t.id = c.to_id
+      WHERE c.is_removed = false AND (c.from_id = $1 OR c.to_id = $1)
+      ORDER BY c.created_at DESC`,
+    [req.user.id]
+  );
+  const ids = rows.map((r) => r.id);
+  const [reactions, comments] = await Promise.all([
+    reactionsForTargets('coupon', ids),
+    commentsForTargets('coupon', ids),
+  ]);
+  res.json(
+    rows.map((c) => ({
+      id: c.id,
+      fromId: c.from_id,
+      fromName: c.from_name,
+      toId: c.to_id,
+      toName: c.to_name,
+      title: c.title,
+      note: c.note,
+      icon: c.icon,
+      status: c.status,
+      redeemedAt: c.redeemed_at,
+      createdAt: c.created_at,
+      reactions: reactions.filter((r) => r.target_id === String(c.id)).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
+      comments: commentsOn(comments, c.id),
+    }))
+  );
+});
+
+// Give the partner a coupon.
+router.post('/coupons', requireUser, async (req, res) => {
+  const title = (req.body?.title || '').trim().slice(0, 120);
+  if (!title) return res.status(400).json({ error: 'Give the coupon a title.' });
+  const note = (req.body?.note || '').trim().slice(0, 300);
+  const icon = (req.body?.icon || '🎟️').trim().slice(0, 8) || '🎟️';
+  const partner = await partnerOf(req.user.id);
+  if (!partner) return res.status(400).json({ error: 'No partner to give it to.' });
+  const { rows } = await query(
+    'INSERT INTO coupon (from_id, to_id, title, note, icon) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+    [req.user.id, partner.id, title, note, icon]
+  );
+  await logActivity(req.user.id, 'gave_coupon', 'coupon', rows[0].id, { title });
+  notify(partner.id, { title: `${req.user.display_name} gave you a coupon 🎟️`, body: title });
+  res.status(201).json({ id: rows[0].id });
+});
+
+// Redeem a coupon you were given (awards Knowing-You points, computed live).
+router.post('/coupons/:id/redeem', requireUser, async (req, res) => {
+  const { rows } = await query("SELECT * FROM coupon WHERE id = $1 AND is_removed = false AND status = 'active'", [req.params.id]);
+  const c = rows[0];
+  if (!c) return res.status(404).json({ error: 'Not found.' });
+  if (c.to_id !== req.user.id) return res.status(403).json({ error: 'Only the person it was given to can redeem it.' });
+  await query("UPDATE coupon SET status = 'redeemed', redeemed_at = now() WHERE id = $1", [c.id]);
+  await logActivity(req.user.id, 'redeemed_coupon', 'coupon', c.id);
+  notify(c.from_id, { title: `${req.user.display_name} redeemed a coupon 🎟️`, body: c.title });
+  res.json({ ok: true });
+});
+
+// Take back a coupon you gave (only while still active). Soft-removed.
+router.post('/coupons/:id/revoke', requireUser, async (req, res) => {
+  const { rows } = await query("SELECT * FROM coupon WHERE id = $1 AND is_removed = false AND status = 'active'", [req.params.id]);
+  const c = rows[0];
+  if (!c) return res.status(404).json({ error: 'Not found.' });
+  if (c.from_id !== req.user.id) return res.status(403).json({ error: 'Only the giver can take it back.' });
+  await query("UPDATE coupon SET status = 'revoked', is_removed = true WHERE id = $1", [c.id]);
+  notify(c.to_id, { title: `${req.user.display_name} took back a coupon`, body: c.title });
   res.json({ ok: true });
 });
 

@@ -24,6 +24,9 @@ export const SCORE_WEIGHTS = {
   guess: { got_it: 10, close: 5, missed: 2 },
 };
 
+// Redeeming a coupon (following through on a favor) is worth a flat amount.
+export const COUPON_POINTS = 5;
+
 // Daily question: each day you BOTH answer is worth more than the last, so a
 // long streak compounds. Worth = base + (streakDay - 1) * step, capped.
 export const DAILY_BASE = 2;
@@ -72,7 +75,17 @@ export const SCORE_LEGEND = [
     label: 'Daily question',
     detail: `+${DAILY_BASE} and climbing each day you both answer — longer streak, more per day (up to +${DAILY_CAP})`,
   },
+  { key: 'coupon', label: 'Coupons', detail: `+${COUPON_POINTS} for each coupon redeemed` },
 ];
+
+// Couple-wide coupon points: a flat amount per redeemed coupon.
+export async function computeCouponScore() {
+  const { rows } = await query(
+    "SELECT count(*)::int AS n FROM coupon WHERE status = 'redeemed' AND is_removed = false"
+  );
+  const count = rows[0].n;
+  return { points: count * COUPON_POINTS, count };
+}
 
 // One day apart? Compares two 'YYYY-MM-DD' strings by calendar days (UTC-safe).
 function dayDiff(a, b) {
@@ -120,11 +133,12 @@ export async function computeDailyScore() {
 
 // The grand total shown on the brain meter: all game points + daily points.
 export async function knowingTotal() {
-  const [gp, daily] = await Promise.all([
+  const [gp, daily, coupons] = await Promise.all([
     query('SELECT COALESCE(SUM(points), 0)::int AS total FROM game_points'),
     computeDailyScore(),
+    computeCouponScore(),
   ]);
-  return gp.rows[0].total + daily.points;
+  return gp.rows[0].total + daily.points + coupons.points;
 }
 
 // Recompute every game's points from the current weights on boot. This is what

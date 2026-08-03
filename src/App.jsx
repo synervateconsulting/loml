@@ -526,6 +526,7 @@ export default function App() {
         {view === 'games' && (
           <GamesView
             meId={me.id}
+            partner={partner}
             onUsePrompt={usePrompt}
             onStartThisThat={startThisThat}
             onStartPredict={startPredict}
@@ -533,6 +534,7 @@ export default function App() {
             onStartGuess={startGuess}
             usedGames={usedGames}
             knowingPoints={knowingPoints}
+            onChanged={load}
           />
         )}
       </main>
