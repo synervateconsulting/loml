@@ -607,3 +607,22 @@ CREATE TABLE IF NOT EXISTS bingo_square (
   done_at   TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS bingo_square_board_idx ON bingo_square (board_id);
+
+-- Time capsules. A sealed letter (with optional media) to open together on a
+-- future date. Content stays hidden until unlock_on arrives AND someone opens
+-- it (a small ceremony). `notified` guards the one-time "ready to open" push.
+-- Media rides along as polymorphic attachments (owner_kind = 'capsule'), served
+-- only once opened_at is set.
+CREATE TABLE IF NOT EXISTS capsule (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_by  INTEGER REFERENCES app_user(id),
+  title       TEXT NOT NULL,
+  body        TEXT NOT NULL DEFAULT '',
+  unlock_on   DATE NOT NULL,
+  opened_at   TIMESTAMPTZ,
+  opened_by   INTEGER REFERENCES app_user(id),
+  notified    BOOLEAN NOT NULL DEFAULT false,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  is_removed  BOOLEAN NOT NULL DEFAULT false
+);
+CREATE INDEX IF NOT EXISTS capsule_unlock_idx ON capsule (unlock_on);

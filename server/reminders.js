@@ -75,6 +75,24 @@ async function weeklyReminderTask({ hour, minute, today }) {
 }
 registerScheduledTask(weeklyReminderTask);
 
+// Time-capsule unlock: once a capsule's date arrives, nudge both partners that
+// it's ready to open together. `notified` makes it fire exactly once. Checked
+// hourly so a capsule whose day arrives is caught the same morning.
+async function capsuleUnlockTask({ minute, today }) {
+  if (minute !== 0) return;
+  const { rows } = await query(
+    'SELECT id, title FROM capsule WHERE is_removed = false AND opened_at IS NULL AND notified = false AND unlock_on <= $1::date',
+    [today]
+  );
+  if (!rows.length) return;
+  const { rows: users } = await query('SELECT id FROM app_user');
+  for (const c of rows) {
+    for (const u of users) await notify(u.id, { title: '⏳ A time capsule is ready', body: `“${c.title}” — open it together.` });
+    await query('UPDATE capsule SET notified = true WHERE id = $1', [c.id]);
+  }
+}
+registerScheduledTask(capsuleUnlockTask);
+
 function tick() {
   const { hour, minute } = appClock();
   const ctx = { hour, minute, today: appToday() };

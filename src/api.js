@@ -67,6 +67,10 @@ export const api = {
   createBingo: (fields) => request('POST', '/bingo', fields),
   toggleBingoSquare: (id) => request('POST', `/bingo/squares/${id}/toggle`),
   removeBingo: (id) => request('POST', `/bingo/${id}/remove`),
+  capsules: () => request('GET', '/capsules'),
+  createCapsule: (fields) => request('POST', '/capsules', fields),
+  openCapsule: (id) => request('POST', `/capsules/${id}/open`),
+  removeCapsule: (id) => request('POST', `/capsules/${id}/remove`),
   coupons: () => request('GET', '/coupons'),
   createCoupon: (fields) => request('POST', '/coupons', fields),
   redeemCoupon: (id) => request('POST', `/coupons/${id}/redeem`),
@@ -103,12 +107,12 @@ export const api = {
   // upload (a dropped part retries without restarting the whole file); smaller
   // files use a single presigned PUT. Both fall back to a legacy multipart POST
   // when object storage is off. Progress via onProgress(pct); `signal` cancels.
-  uploadAttachment: async ({ ownerKind, questionId, responseId, file, fileName, mimeType, durationSecs, onProgress, signal }) => {
+  uploadAttachment: async ({ ownerKind, questionId, responseId, capsuleId, file, fileName, mimeType, durationSecs, onProgress, signal }) => {
     const toSend = await maybeCompressImage(file);
     const name = fileName || toSend.name || file.name || 'recording';
     const type = mimeType || toSend.type || file.type || '';
     const payload = type ? new File([toSend], name, { type }) : toSend;
-    const meta = { ownerKind, questionId, responseId, fileName: name, mimeType: type, durationSecs };
+    const meta = { ownerKind, questionId, responseId, capsuleId, fileName: name, mimeType: type, durationSecs };
     const MULTIPART = 20 * 1024 * 1024;
 
     const legacy = () => {
@@ -120,6 +124,7 @@ export const api = {
         form.append('ownerKind', ownerKind);
         if (questionId) form.append('questionId', questionId);
         if (responseId) form.append('responseId', responseId);
+        if (capsuleId) form.append('capsuleId', capsuleId);
         if (durationSecs != null) form.append('durationSecs', String(durationSecs));
         form.append('file', payload, name);
         return xhrSend({ method: 'POST', url: '/api/attachments', body: form, credentials: true, onProgress, signal, parse: true });
@@ -132,7 +137,7 @@ export const api = {
       return multipartUpload(payload, init, meta, onProgress, signal);
     }
 
-    const pre = await request('POST', '/attachments/presign', { ownerKind, questionId, responseId, byteSize: payload.size });
+    const pre = await request('POST', '/attachments/presign', { ownerKind, questionId, responseId, capsuleId, byteSize: payload.size });
     if (pre?.enabled === false) return legacy();
     // Single presigned PUT straight to R2, then record it.
     const attempts = payload.size > 15 * 1024 * 1024 ? 1 : 3;

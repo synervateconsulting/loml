@@ -785,7 +785,7 @@ router.patch('/responses/:id', requireUser, async (req, res) => {
 /* ------------------------------------------------------------ attachments */
 
 // Shared owner/permission check for attaching to a question or a response.
-async function attachTarget(userId, ownerKind, questionId, responseId) {
+async function attachTarget(userId, ownerKind, questionId, responseId, capsuleId) {
   if (ownerKind === 'question') {
     const { rows } = await query('SELECT * FROM question WHERE id = $1 AND is_removed = false', [questionId]);
     const q = rows[0];
@@ -801,15 +801,26 @@ async function attachTarget(userId, ownerKind, questionId, responseId) {
     if (r.responder_id !== userId) return { status: 403, error: 'Only the person who answered can attach to it.' };
     return { ok: true };
   }
-  return { status: 400, error: 'ownerKind must be question or response.' };
+  if (ownerKind === 'capsule') {
+    const { rows } = await query('SELECT id, opened_at FROM capsule WHERE id = $1 AND is_removed = false', [capsuleId]);
+    const c = rows[0];
+    if (!c) return { status: 404, error: 'Capsule not found.' };
+    if (c.opened_at) return { status: 409, error: 'This capsule is already open.' };
+    return { ok: true };
+  }
+  return { status: 400, error: 'ownerKind must be question, response or capsule.' };
 }
+
+// Which id column holds the owner, for the polymorphic attachment write.
+const ownerIdFor = (ownerKind, { questionId, responseId, capsuleId }) =>
+  ownerKind === 'question' ? questionId : ownerKind === 'response' ? responseId : capsuleId;
 
 // Direct-to-R2 upload, step 1: hand back a presigned PUT the browser uploads to.
 // If R2 isn't configured, the client falls back to the legacy multipart POST.
 router.post('/attachments/presign', requireUser, async (req, res) => {
   if (!r2Enabled()) return res.json({ enabled: false });
-  const { ownerKind, questionId, responseId, byteSize } = req.body || {};
-  const t = await attachTarget(req.user.id, ownerKind, questionId, responseId);
+  const { ownerKind, questionId, responseId, capsuleId, byteSize } = req.body || {};
+  const t = await attachTarget(req.user.id, ownerKind, questionId, responseId, capsuleId);
   if (t.error) return res.status(t.status).json({ error: t.error });
   if (Number(byteSize) > MAX_UPLOAD_MB * 1024 * 1024)
     return res.status(413).json({ error: `That file is too large — the limit is ${MAX_UPLOAD_MB} MB.` });
@@ -820,13 +831,13 @@ router.post('/attachments/presign', requireUser, async (req, res) => {
 
 // Record a finished R2 object as an attachment row. Shared by the single-PUT
 // and multipart completion paths.
-async function recordR2Attachment(userId, { ownerKind, questionId, responseId, key, fileName, mimeType, durationSecs, byteSize }) {
+async function recordR2Attachment(userId, { ownerKind, questionId, responseId, capsuleId, key, fileName, mimeType, durationSecs, byteSize }) {
   const { mime, kind } = effectiveMedia({
     mime_type: mimeType,
     media_kind: mediaKindFor(mimeType),
     file_name: fileName,
   });
-  const ownerId = ownerKind === 'question' ? questionId : responseId;
+  const ownerId = ownerIdFor(ownerKind, { questionId, responseId, capsuleId });
   const { rows } = await query(
     `INSERT INTO attachment
        (owner_kind, owner_id, question_id, response_id, uploaded_by, media_kind, mime_type,
@@ -856,8 +867,8 @@ const validKey = (k) => typeof k === 'string' && k.startsWith('att/');
 // Direct-to-R2 upload, step 2: verify the object landed, then record it.
 router.post('/attachments/complete', requireUser, async (req, res) => {
   if (!r2Enabled()) return res.status(409).json({ error: 'Object storage is not enabled.' });
-  const { ownerKind, questionId, responseId, key, fileName, mimeType, durationSecs } = req.body || {};
-  const t = await attachTarget(req.user.id, ownerKind, questionId, responseId);
+  const { ownerKind, questionId, responseId, capsuleId, key, fileName, mimeType, durationSecs } = req.body || {};
+  const t = await attachTarget(req.user.id, ownerKind, questionId, responseId, capsuleId);
   if (t.error) return res.status(t.status).json({ error: t.error });
   if (!validKey(key)) return res.status(400).json({ error: 'Bad key.' });
   const head = await headObject(key);
@@ -866,6 +877,7 @@ router.post('/attachments/complete', requireUser, async (req, res) => {
     ownerKind,
     questionId,
     responseId,
+    capsuleId,
     key,
     fileName,
     mimeType,
@@ -880,8 +892,8 @@ router.post('/attachments/complete', requireUser, async (req, res) => {
 // Step 1: start a multipart upload.
 router.post('/attachments/multipart/init', requireUser, async (req, res) => {
   if (!r2Enabled()) return res.json({ enabled: false });
-  const { ownerKind, questionId, responseId, byteSize, mimeType } = req.body || {};
-  const t = await attachTarget(req.user.id, ownerKind, questionId, responseId);
+  const { ownerKind, questionId, responseId, capsuleId, byteSize, mimeType } = req.body || {};
+  const t = await attachTarget(req.user.id, ownerKind, questionId, responseId, capsuleId);
   if (t.error) return res.status(t.status).json({ error: t.error });
   if (Number(byteSize) > MAX_UPLOAD_MB * 1024 * 1024)
     return res.status(413).json({ error: `That file is too large — the limit is ${MAX_UPLOAD_MB} MB.` });
@@ -904,8 +916,8 @@ router.post('/attachments/multipart/part', requireUser, async (req, res) => {
 // Step 3: assemble the parts, verify, and record the attachment.
 router.post('/attachments/multipart/complete', requireUser, async (req, res) => {
   if (!r2Enabled()) return res.status(409).json({ error: 'Object storage is not enabled.' });
-  const { ownerKind, questionId, responseId, key, uploadId, parts, fileName, mimeType, durationSecs } = req.body || {};
-  const t = await attachTarget(req.user.id, ownerKind, questionId, responseId);
+  const { ownerKind, questionId, responseId, capsuleId, key, uploadId, parts, fileName, mimeType, durationSecs } = req.body || {};
+  const t = await attachTarget(req.user.id, ownerKind, questionId, responseId, capsuleId);
   if (t.error) return res.status(t.status).json({ error: t.error });
   if (!validKey(key) || !uploadId || !Array.isArray(parts) || !parts.length)
     return res.status(400).json({ error: 'Bad completion request.' });
@@ -919,6 +931,7 @@ router.post('/attachments/multipart/complete', requireUser, async (req, res) => 
     ownerKind,
     questionId,
     responseId,
+    capsuleId,
     key,
     fileName,
     mimeType,
@@ -938,29 +951,10 @@ router.post('/attachments/multipart/abort', requireUser, async (req, res) => {
 // Legacy path: multipart upload buffered through the server into Postgres bytea.
 // Used only when R2 isn't configured (the client falls back to this).
 router.post('/attachments', requireUser, upload.single('file'), async (req, res) => {
-  const { ownerKind, questionId, responseId, durationSecs } = req.body || {};
+  const { ownerKind, questionId, responseId, capsuleId, durationSecs } = req.body || {};
   if (!req.file) return res.status(400).json({ error: 'No file received.' });
-  if (!['question', 'response'].includes(ownerKind))
-    return res.status(400).json({ error: 'ownerKind must be question or response.' });
-
-  if (ownerKind === 'question') {
-    const { rows } = await query('SELECT * FROM question WHERE id = $1 AND is_removed = false', [
-      questionId,
-    ]);
-    const q = rows[0];
-    if (!q) return res.status(404).json({ error: 'Not found.' });
-    if (q.asker_id !== req.user.id) return res.status(403).json({ error: 'This is not yours.' });
-    if (q.status === 'answered')
-      return res.status(409).json({ error: "This one's already resolved, so it's locked." });
-  } else {
-    const { rows } = await query('SELECT * FROM response WHERE id = $1 AND is_removed = false', [
-      responseId,
-    ]);
-    const r = rows[0];
-    if (!r) return res.status(404).json({ error: 'Answer not found.' });
-    if (r.responder_id !== req.user.id)
-      return res.status(403).json({ error: 'Only the person who answered can attach to it.' });
-  }
+  const t = await attachTarget(req.user.id, ownerKind, questionId, responseId, capsuleId);
+  if (t.error) return res.status(t.status).json({ error: t.error });
 
   // Trust the extension over a generic upload mime so recordings never land as
   // plain "file" downloads.
@@ -970,7 +964,7 @@ router.post('/attachments', requireUser, upload.single('file'), async (req, res)
     file_name: req.file.originalname,
   });
 
-  const ownerId = ownerKind === 'question' ? questionId : responseId;
+  const ownerId = ownerIdFor(ownerKind, { questionId, responseId, capsuleId });
   const { rows } = await query(
     `INSERT INTO attachment
        (owner_kind, owner_id, question_id, response_id, uploaded_by, media_kind, mime_type,
@@ -1009,8 +1003,15 @@ router.get('/attachments/:id', requireUser, async (req, res) => {
   );
   const a = rows[0];
   if (!a) return res.status(404).json({ error: 'Attachment not found.' });
-  if (a.asker_id !== req.user.id && a.recipient_id !== req.user.id)
+  if (a.owner_kind === 'capsule') {
+    // A capsule's media stays sealed with it — only served once it's been opened.
+    const { rows: cap } = await query('SELECT opened_at, is_removed FROM capsule WHERE id = $1', [a.owner_id]);
+    const c = cap[0];
+    if (!c || c.is_removed) return res.status(404).json({ error: 'Capsule not found.' });
+    if (!c.opened_at) return res.status(403).json({ error: 'This capsule is still sealed.' });
+  } else if (a.asker_id !== req.user.id && a.recipient_id !== req.user.id) {
     return res.status(403).json({ error: 'Not yours to open.' });
+  }
 
   // Stored in R2: auth is done, hand off to a short-lived presigned URL. R2
   // serves the bytes and Range requests directly (streaming, seeking). Prefer
@@ -1343,6 +1344,12 @@ async function authorizeComment(user, targetType, targetId) {
     const { rows } = await query('SELECT id FROM bingo_board WHERE id = $1 AND is_removed = false', [targetId]);
     if (!rows[0]) return { status: 404, error: 'Not found.' };
     return { onCreated: (body) => partner && notify(partner.id, { title: `${user.display_name} commented on a bingo board`, body }) };
+  }
+  if (targetType === 'capsule') {
+    const { rows } = await query('SELECT opened_at FROM capsule WHERE id = $1 AND is_removed = false', [targetId]);
+    if (!rows[0]) return { status: 404, error: 'Not found.' };
+    if (!rows[0].opened_at) return { status: 409, error: 'You can comment once it’s opened.' };
+    return { onCreated: (body) => partner && notify(partner.id, { title: `${user.display_name} commented on a time capsule`, body }) };
   }
   return { status: 400, error: 'Unknown comment target.' };
 }
@@ -1903,7 +1910,7 @@ const REACTION_EMOJI = ['❤️', '🔥', '😈', '😂', '🥹', '👀'];
 
 router.post('/reactions', requireUser, async (req, res) => {
   const { targetKind, targetId, emoji } = req.body || {};
-  if (!['question', 'response', 'reveal', 'event', 'thisthat', 'list', 'daily', 'coupon', 'gratitude', 'checkin', 'bingo'].includes(targetKind))
+  if (!['question', 'response', 'reveal', 'event', 'thisthat', 'list', 'daily', 'coupon', 'gratitude', 'checkin', 'bingo', 'capsule'].includes(targetKind))
     return res.status(400).json({ error: 'Bad target.' });
 
   // Confirm the target is part of a share you're in, and figure out whether
@@ -1938,6 +1945,10 @@ router.post('/reactions', requireUser, async (req, res) => {
   } else if (targetKind === 'bingo') {
     const { rows } = await query('SELECT id FROM bingo_board WHERE id = $1 AND is_removed = false', [targetId]);
     if (rows[0]) member = true;
+  } else if (targetKind === 'capsule') {
+    // A capsule is shared, but only reactable once it's been opened.
+    const { rows } = await query('SELECT opened_at FROM capsule WHERE id = $1 AND is_removed = false', [targetId]);
+    if (rows[0] && rows[0].opened_at) member = true;
   } else if (targetKind === 'question') {
     const { rows } = await query('SELECT asker_id, recipient_id FROM question WHERE id = $1', [targetId]);
     const q = rows[0];
@@ -2738,6 +2749,105 @@ router.post('/bingo/squares/:id/toggle', requireUser, async (req, res) => {
 
 router.post('/bingo/:id/remove', requireUser, async (req, res) => {
   await query('UPDATE bingo_board SET is_removed = true WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+/* ----------------------------------------------------------- time capsules */
+
+async function capsuleAttachments(ids) {
+  if (!ids.length) return [];
+  const { rows } = await query(
+    `SELECT id, owner_id, media_kind, mime_type, file_name, byte_size, duration_secs, transcode_status
+       FROM attachment
+      WHERE owner_kind = 'capsule' AND owner_id = ANY($1::uuid[]) AND is_removed = false
+      ORDER BY created_at ASC`,
+    [ids]
+  );
+  return rows;
+}
+
+// All capsules, shaped for the viewer. A sealed capsule reveals only its title,
+// unlock date and who made it — never the body or media — until it's opened.
+router.get('/capsules', requireUser, async (req, res) => {
+  const today = appToday();
+  const { rows } = await query(
+    `SELECT c.id, c.title, c.body, c.created_by, u.display_name AS creator_name,
+            to_char(c.unlock_on, 'YYYY-MM-DD') AS unlock_on, c.opened_at, c.opened_by,
+            (SELECT count(*)::int FROM attachment a
+               WHERE a.owner_kind = 'capsule' AND a.owner_id = c.id AND a.is_removed = false) AS media_count
+       FROM capsule c JOIN app_user u ON u.id = c.created_by
+      WHERE c.is_removed = false
+      ORDER BY (c.opened_at IS NOT NULL), c.unlock_on ASC, c.created_at ASC`
+  );
+  const openedIds = rows.filter((c) => c.opened_at).map((c) => c.id);
+  const [reactions, comments, atts] = await Promise.all([
+    reactionsForTargets('capsule', openedIds),
+    commentsForTargets('capsule', openedIds),
+    capsuleAttachments(openedIds),
+  ]);
+  res.json(
+    rows.map((c) => {
+      const opened = Boolean(c.opened_at);
+      const base = {
+        id: c.id,
+        title: c.title,
+        createdBy: c.created_by,
+        creatorName: c.creator_name,
+        mine: c.created_by === req.user.id,
+        unlockOn: c.unlock_on,
+        opened,
+        openable: !opened && c.unlock_on <= today,
+        mediaCount: c.media_count,
+      };
+      if (!opened) return base;
+      return {
+        ...base,
+        body: c.body,
+        openedAt: c.opened_at,
+        attachments: atts.filter((a) => a.owner_id === c.id),
+        reactions: reactions.filter((r) => r.target_id === String(c.id)).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
+        comments: commentsOn(comments, c.id),
+      };
+    })
+  );
+});
+
+router.post('/capsules', requireUser, async (req, res) => {
+  const title = (req.body?.title || '').trim().slice(0, 160);
+  const body = (req.body?.body || '').trim().slice(0, 5000);
+  const unlockOn = String(req.body?.unlockOn || '');
+  if (!title) return res.status(400).json({ error: 'Give it a title.' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(unlockOn)) return res.status(400).json({ error: 'Pick an unlock date.' });
+  if (unlockOn <= appToday()) return res.status(400).json({ error: 'Pick a date in the future.' });
+  const { rows } = await query(
+    'INSERT INTO capsule (created_by, title, body, unlock_on) VALUES ($1, $2, $3, $4) RETURNING id',
+    [req.user.id, title, body, unlockOn]
+  );
+  const id = rows[0].id;
+  await logActivity(req.user.id, 'made_capsule', 'capsule', id, { title });
+  const partner = await partnerOf(req.user.id);
+  if (partner) notify(partner.id, { title: `${req.user.display_name} sealed a time capsule`, body: `Opens ${unlockOn}` });
+  res.status(201).json({ id });
+});
+
+router.post('/capsules/:id/open', requireUser, async (req, res) => {
+  const { rows } = await query(
+    "SELECT id, opened_at, to_char(unlock_on, 'YYYY-MM-DD') AS unlock_on FROM capsule WHERE id = $1 AND is_removed = false",
+    [req.params.id]
+  );
+  const c = rows[0];
+  if (!c) return res.status(404).json({ error: 'Not found.' });
+  if (c.opened_at) return res.json({ ok: true });
+  if (c.unlock_on > appToday()) return res.status(409).json({ error: `Still sealed until ${c.unlock_on}.` });
+  await query('UPDATE capsule SET opened_at = now(), opened_by = $1 WHERE id = $2 AND opened_at IS NULL', [req.user.id, c.id]);
+  await logActivity(req.user.id, 'opened_capsule', 'capsule', c.id);
+  const partner = await partnerOf(req.user.id);
+  if (partner) notify(partner.id, { title: `${req.user.display_name} opened a time capsule`, body: 'Come see what was inside.' });
+  res.json({ ok: true });
+});
+
+router.post('/capsules/:id/remove', requireUser, async (req, res) => {
+  await query('UPDATE capsule SET is_removed = true WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 });
 

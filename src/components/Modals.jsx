@@ -63,7 +63,7 @@ const hostOf = (url) => {
   }
 };
 
-async function uploadStaged({ staged, setStaged, ownerKind, questionId, responseId, onProgress, signal }) {
+export async function uploadStaged({ staged, setStaged, ownerKind, questionId, responseId, capsuleId, onProgress, signal }) {
   const remaining = [...staged];
   const total = staged.length;
   try {
@@ -75,6 +75,7 @@ async function uploadStaged({ staged, setStaged, ownerKind, questionId, response
         ownerKind,
         questionId,
         responseId,
+        capsuleId,
         file: it.file,
         fileName: it.fileName,
         mimeType: it.mimeType,

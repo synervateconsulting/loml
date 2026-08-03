@@ -5,6 +5,7 @@ import { Modal, WhenFields } from './Modals.jsx';
 import { Reactions } from './Reactions.jsx';
 import Confirm from './Confirm.jsx';
 import Countdown from './Countdown.jsx';
+import CapsulesView from './Capsules.jsx';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const MONTHS = [
@@ -528,6 +529,13 @@ export default function CalendarView({ events, dateRequests = [], notifications,
           </button>
           <button
             type="button"
+            className={`topnav__item ${pane === 'capsules' ? 'is-active' : ''}`}
+            onClick={() => setPane('capsules')}
+          >
+            Capsules
+          </button>
+          <button
+            type="button"
             className={`topnav__item ${pane === 'notifications' ? 'is-active' : ''}`}
             onClick={() => setPane('notifications')}
           >
@@ -617,6 +625,8 @@ export default function CalendarView({ events, dateRequests = [], notifications,
           )}
         </div>
       )}
+
+      {pane === 'capsules' && <CapsulesView meId={meId} />}
 
       {pane === 'notifications' && (
         <div className="notiflist">
