@@ -5,7 +5,17 @@ import { startSession, endSession, requireUser, partnerOf } from './auth.js';
 import { publicKey, saveSubscription, notify } from './push.js';
 import { promptForDay, appToday } from './daily.js';
 import { pickPoints, guessPoints, revealPoints, maxPointsFor, SCORE_LEGEND, computeDailyScore, knowingTotal } from './scoring.js';
-import { r2Enabled, newOriginalKey, presignPut, presignGet, headObject } from './storage.js';
+import {
+  r2Enabled,
+  newOriginalKey,
+  presignPut,
+  presignGet,
+  headObject,
+  createMultipart,
+  presignUploadPart,
+  completeMultipart,
+  abortMultipart,
+} from './storage.js';
 
 // Copy for the push banners.
 const newShareTitle = (name, kind) =>
@@ -797,16 +807,9 @@ router.post('/attachments/presign', requireUser, async (req, res) => {
   res.json({ enabled: true, key, url });
 });
 
-// Direct-to-R2 upload, step 2: verify the object landed, then record it.
-router.post('/attachments/complete', requireUser, async (req, res) => {
-  if (!r2Enabled()) return res.status(409).json({ error: 'Object storage is not enabled.' });
-  const { ownerKind, questionId, responseId, key, fileName, mimeType, durationSecs } = req.body || {};
-  const t = await attachTarget(req.user.id, ownerKind, questionId, responseId);
-  if (t.error) return res.status(t.status).json({ error: t.error });
-  if (typeof key !== 'string' || !key.startsWith('att/')) return res.status(400).json({ error: 'Bad key.' });
-  const head = await headObject(key);
-  if (!head) return res.status(400).json({ error: 'Upload did not finish. Try again.' });
-
+// Record a finished R2 object as an attachment row. Shared by the single-PUT
+// and multipart completion paths.
+async function recordR2Attachment(userId, { ownerKind, questionId, responseId, key, fileName, mimeType, durationSecs, byteSize }) {
   const { mime, kind } = effectiveMedia({
     mime_type: mimeType,
     media_kind: mediaKindFor(mimeType),
@@ -822,17 +825,101 @@ router.post('/attachments/complete', requireUser, async (req, res) => {
       ownerKind,
       ownerKind === 'question' ? questionId : null,
       ownerKind === 'response' ? responseId : null,
-      req.user.id,
+      userId,
       kind,
       mime || 'application/octet-stream',
       fileName || null,
-      head.size,
+      byteSize,
       durationSecs ? Number(durationSecs) : null,
       key,
     ]
   );
-  await logActivity(req.user.id, 'added_attachment', 'attachment', rows[0].id);
-  res.status(201).json(rows[0]);
+  await logActivity(userId, 'added_attachment', 'attachment', rows[0].id);
+  return rows[0];
+}
+
+const validKey = (k) => typeof k === 'string' && k.startsWith('att/');
+
+// Direct-to-R2 upload, step 2: verify the object landed, then record it.
+router.post('/attachments/complete', requireUser, async (req, res) => {
+  if (!r2Enabled()) return res.status(409).json({ error: 'Object storage is not enabled.' });
+  const { ownerKind, questionId, responseId, key, fileName, mimeType, durationSecs } = req.body || {};
+  const t = await attachTarget(req.user.id, ownerKind, questionId, responseId);
+  if (t.error) return res.status(t.status).json({ error: t.error });
+  if (!validKey(key)) return res.status(400).json({ error: 'Bad key.' });
+  const head = await headObject(key);
+  if (!head) return res.status(400).json({ error: 'Upload did not finish. Try again.' });
+  const row = await recordR2Attachment(req.user.id, {
+    ownerKind,
+    questionId,
+    responseId,
+    key,
+    fileName,
+    mimeType,
+    durationSecs,
+    byteSize: head.size,
+  });
+  res.status(201).json(row);
+});
+
+/* ---- resumable multipart (files over the threshold) ---- */
+
+// Step 1: start a multipart upload.
+router.post('/attachments/multipart/init', requireUser, async (req, res) => {
+  if (!r2Enabled()) return res.json({ enabled: false });
+  const { ownerKind, questionId, responseId, byteSize, mimeType } = req.body || {};
+  const t = await attachTarget(req.user.id, ownerKind, questionId, responseId);
+  if (t.error) return res.status(t.status).json({ error: t.error });
+  if (Number(byteSize) > MAX_UPLOAD_MB * 1024 * 1024)
+    return res.status(413).json({ error: `That file is too large — the limit is ${MAX_UPLOAD_MB} MB.` });
+  const key = newOriginalKey();
+  const uploadId = await createMultipart(key, mimeType);
+  res.json({ enabled: true, key, uploadId, partSize: 8 * 1024 * 1024 });
+});
+
+// Step 2 (per part): presign one part PUT. Called once per part, and again on a
+// retry — so a dropped part resumes without restarting the whole upload.
+router.post('/attachments/multipart/part', requireUser, async (req, res) => {
+  if (!r2Enabled()) return res.status(409).json({ error: 'Object storage is not enabled.' });
+  const { key, uploadId, partNumber } = req.body || {};
+  const n = Number(partNumber);
+  if (!validKey(key) || !uploadId || !(n >= 1)) return res.status(400).json({ error: 'Bad part request.' });
+  const url = await presignUploadPart(key, uploadId, n);
+  res.json({ url });
+});
+
+// Step 3: assemble the parts, verify, and record the attachment.
+router.post('/attachments/multipart/complete', requireUser, async (req, res) => {
+  if (!r2Enabled()) return res.status(409).json({ error: 'Object storage is not enabled.' });
+  const { ownerKind, questionId, responseId, key, uploadId, parts, fileName, mimeType, durationSecs } = req.body || {};
+  const t = await attachTarget(req.user.id, ownerKind, questionId, responseId);
+  if (t.error) return res.status(t.status).json({ error: t.error });
+  if (!validKey(key) || !uploadId || !Array.isArray(parts) || !parts.length)
+    return res.status(400).json({ error: 'Bad completion request.' });
+  const Parts = parts
+    .map((p) => ({ PartNumber: Number(p.partNumber), ETag: p.etag }))
+    .sort((a, b) => a.PartNumber - b.PartNumber);
+  await completeMultipart(key, uploadId, Parts);
+  const head = await headObject(key);
+  if (!head) return res.status(400).json({ error: 'Upload did not finish. Try again.' });
+  const row = await recordR2Attachment(req.user.id, {
+    ownerKind,
+    questionId,
+    responseId,
+    key,
+    fileName,
+    mimeType,
+    durationSecs,
+    byteSize: head.size,
+  });
+  res.status(201).json(row);
+});
+
+// Cancel/cleanup an abandoned multipart so R2 doesn't keep orphan parts.
+router.post('/attachments/multipart/abort', requireUser, async (req, res) => {
+  const { key, uploadId } = req.body || {};
+  if (r2Enabled() && validKey(key) && uploadId) await abortMultipart(key, uploadId);
+  res.json({ ok: true });
 });
 
 // Legacy path: multipart upload buffered through the server into Postgres bytea.

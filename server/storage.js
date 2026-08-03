@@ -9,6 +9,10 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   DeleteObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -78,6 +82,47 @@ export async function putObject(key, body, contentType) {
 export async function deleteObject(key) {
   try {
     await client().send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+  } catch {
+    /* best-effort */
+  }
+}
+
+/* -------- resumable multipart (large files) -------- */
+
+// Start a multipart upload; returns the uploadId.
+export async function createMultipart(key, contentType) {
+  const out = await client().send(
+    new CreateMultipartUploadCommand({ Bucket: BUCKET, Key: key, ContentType: contentType || 'application/octet-stream' })
+  );
+  return out.UploadId;
+}
+
+// Presigned PUT for one part. The browser uploads the chunk straight to R2 and
+// reads back the part's ETag (needs CORS ExposeHeaders: ["ETag"]).
+export function presignUploadPart(key, uploadId, partNumber) {
+  return getSignedUrl(
+    client(),
+    new UploadPartCommand({ Bucket: BUCKET, Key: key, UploadId: uploadId, PartNumber: partNumber }),
+    { expiresIn: SIGNED_TTL }
+  );
+}
+
+// Assemble the parts into the final object. parts: [{ PartNumber, ETag }].
+export async function completeMultipart(key, uploadId, parts) {
+  await client().send(
+    new CompleteMultipartUploadCommand({
+      Bucket: BUCKET,
+      Key: key,
+      UploadId: uploadId,
+      MultipartUpload: { Parts: parts },
+    })
+  );
+}
+
+// Discard an abandoned/cancelled multipart so R2 doesn't keep orphan parts.
+export async function abortMultipart(key, uploadId) {
+  try {
+    await client().send(new AbortMultipartUploadCommand({ Bucket: BUCKET, Key: key, UploadId: uploadId }));
   } catch {
     /* best-effort */
   }
