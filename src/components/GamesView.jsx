@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import DecksView from './DecksView.jsx';
 import { THISTHAT_TEMPLATES, PREDICT_TEMPLATES, WYR_TEMPLATES, GUESS_PROMPTS } from '../thisthat.js';
 import { templateToItems } from './ThisThat.jsx';
-import { DailyHistory } from './Daily.jsx';
 import { Modal } from './Modals.jsx';
 import { Reactions, CommentThread } from './Reactions.jsx';
 import Confirm, { sendSteps, discardSteps } from './Confirm.jsx';
@@ -58,7 +57,6 @@ export default function GamesView({
     ['wyr', 'Would You Rather', '🤔'],
     ['guessing', 'Guessing', '🔮💬'],
     ['coupons', 'Coupons', '🎟️'],
-    ['today', 'Today’s ?', '📅'],
   ];
 
   return (
@@ -240,8 +238,6 @@ export default function GamesView({
       )}
 
       {pane === 'coupons' && <CouponsView meId={meId} partner={partner} onChanged={onChanged} />}
-
-      {pane === 'today' && <DailyHistory meId={meId} />}
     </div>
   );
 }

@@ -554,3 +554,34 @@ CREATE TABLE IF NOT EXISTS coupon (
   is_removed   BOOLEAN NOT NULL DEFAULT false
 );
 CREATE INDEX IF NOT EXISTS coupon_people_idx ON coupon (from_id, to_id);
+
+-- Gratitude ritual: a directed daily appreciation (from → to). A wall; the
+-- streak is per-person (consecutive days you added one).
+CREATE TABLE IF NOT EXISTS gratitude (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  from_id      INTEGER NOT NULL REFERENCES app_user(id),
+  to_id        INTEGER NOT NULL REFERENCES app_user(id),
+  day          DATE NOT NULL,
+  body         TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  is_removed   BOOLEAN NOT NULL DEFAULT false
+);
+CREATE INDEX IF NOT EXISTS gratitude_day_idx ON gratitude (day);
+
+-- Weekly check-in: both answer a few prompts privately, revealed once both are
+-- in (the daily-question mechanic, weekly). week_start is that week's Sunday.
+CREATE TABLE IF NOT EXISTS checkin (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  week_start   DATE NOT NULL UNIQUE,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS checkin_answer (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  checkin_id   UUID NOT NULL REFERENCES checkin(id),
+  user_id      INTEGER NOT NULL REFERENCES app_user(id),
+  prompt_key   TEXT NOT NULL,
+  body         TEXT NOT NULL DEFAULT '',
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (checkin_id, user_id, prompt_key)
+);

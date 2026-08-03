@@ -4,6 +4,7 @@ import { query, keyMatches, logActivity, pool } from './db.js';
 import { startSession, endSession, requireUser, partnerOf } from './auth.js';
 import { publicKey, saveSubscription, notify } from './push.js';
 import { promptForDay, appToday } from './daily.js';
+import { WEEKLY_PROMPTS, WEEKLY_KEYS, weekStart } from './rituals.js';
 import {
   pickPoints,
   guessPoints,
@@ -1325,6 +1326,18 @@ async function authorizeComment(user, targetType, targetId) {
     const other = c.from_id === user.id ? c.to_id : c.from_id;
     return { onCreated: (body) => notify(other, { title: `${user.display_name} commented on a coupon`, body }) };
   }
+  if (targetType === 'gratitude') {
+    const { rows } = await query('SELECT from_id, to_id FROM gratitude WHERE id = $1 AND is_removed = false', [targetId]);
+    const g = rows[0];
+    if (!g) return { status: 404, error: 'Not found.' };
+    if (g.from_id !== user.id && g.to_id !== user.id) return { status: 403, error: "This isn't yours." };
+    const other = g.from_id === user.id ? g.to_id : g.from_id;
+    return { onCreated: (body) => notify(other, { title: `${user.display_name} commented`, body }) };
+  }
+  if (targetType === 'checkin') {
+    if (!(await checkinRevealed(targetId))) return { status: 409, error: 'You can comment once it’s revealed.' };
+    return { onCreated: (body) => partner && notify(partner.id, { title: `${user.display_name} commented on your check-in`, body }) };
+  }
   return { status: 400, error: 'Unknown comment target.' };
 }
 
@@ -1579,6 +1592,209 @@ router.patch('/daily', requireUser, async (req, res) => {
 // (Daily reactions & comments now go through the generic /reactions and
 // /comments endpoints with target_type/kind 'daily' and the day as the id.)
 
+/* ------------------------------------------------------------- gratitude */
+
+// Per-person streak: consecutive days (ending today or yesterday) you posted.
+async function gratitudeStreak(userId) {
+  const { rows } = await query(
+    "SELECT DISTINCT to_char(day, 'YYYY-MM-DD') AS day FROM gratitude WHERE from_id = $1 AND is_removed = false",
+    [userId]
+  );
+  const set = new Set(rows.map((r) => r.day));
+  const cur = new Date(`${appToday()}T00:00:00`);
+  if (!set.has(fmtDay(cur))) cur.setDate(cur.getDate() - 1);
+  let streak = 0;
+  while (set.has(fmtDay(cur))) {
+    streak++;
+    cur.setDate(cur.getDate() - 1);
+  }
+  return streak;
+}
+
+router.get('/gratitude', requireUser, async (req, res) => {
+  const partner = await partnerOf(req.user.id);
+  const { rows } = await query(
+    `SELECT g.id, g.from_id, g.to_id, to_char(g.day, 'YYYY-MM-DD') AS day, g.body, g.created_at,
+            f.display_name AS from_name, t.display_name AS to_name
+       FROM gratitude g JOIN app_user f ON f.id = g.from_id JOIN app_user t ON t.id = g.to_id
+      WHERE g.is_removed = false ORDER BY g.created_at DESC LIMIT 100`
+  );
+  const ids = rows.map((r) => r.id);
+  const [reactions, comments] = await Promise.all([
+    reactionsForTargets('gratitude', ids),
+    commentsForTargets('gratitude', ids),
+  ]);
+  const today = appToday();
+  res.json({
+    partnerName: partner?.display_name || 'them',
+    streak: await gratitudeStreak(req.user.id),
+    addedToday: rows.some((r) => r.from_id === req.user.id && r.day === today),
+    wall: rows.map((g) => ({
+      id: g.id,
+      fromId: g.from_id,
+      fromName: g.from_name,
+      toId: g.to_id,
+      toName: g.to_name,
+      day: g.day,
+      body: g.body,
+      createdAt: g.created_at,
+      reactions: reactions.filter((r) => r.target_id === String(g.id)).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
+      comments: commentsOn(comments, g.id),
+    })),
+  });
+});
+
+router.post('/gratitude', requireUser, async (req, res) => {
+  const body = (req.body?.body || '').trim().slice(0, 500);
+  if (!body) return res.status(400).json({ error: 'Write a little something.' });
+  const partner = await partnerOf(req.user.id);
+  if (!partner) return res.status(400).json({ error: 'No partner.' });
+  const { rows } = await query(
+    'INSERT INTO gratitude (from_id, to_id, day, body) VALUES ($1, $2, $3::date, $4) RETURNING id',
+    [req.user.id, partner.id, appToday(), body]
+  );
+  await logActivity(req.user.id, 'gratitude', 'gratitude', rows[0].id);
+  notify(partner.id, { title: `${req.user.display_name} appreciated you 🌷`, body });
+  res.status(201).json({ id: rows[0].id });
+});
+
+/* ------------------------------------------------------- weekly check-in */
+
+const checkinDone = (answersByUser, userId) => {
+  const a = answersByUser.get(userId) || {};
+  return WEEKLY_KEYS.every((k) => (a[k] || '').trim());
+};
+
+// A check-in is revealed once both partners have filled every prompt.
+async function checkinRevealed(id) {
+  const { rows } = await query(
+    "SELECT count(*)::int AS filled FROM checkin_answer WHERE checkin_id = $1 AND body <> ''",
+    [id]
+  );
+  return rows[0].filled >= 2 * WEEKLY_KEYS.length;
+}
+
+async function loadCheckin(ws) {
+  const { rows } = await query('SELECT id FROM checkin WHERE week_start = $1::date', [ws]);
+  if (!rows[0]) return { id: null, answersByUser: new Map() };
+  const id = rows[0].id;
+  const ans = await query('SELECT user_id, prompt_key, body FROM checkin_answer WHERE checkin_id = $1', [id]);
+  const map = new Map();
+  for (const r of ans.rows) {
+    if (!map.has(r.user_id)) map.set(r.user_id, {});
+    map.get(r.user_id)[r.prompt_key] = r.body;
+  }
+  return { id, answersByUser: map };
+}
+
+// Consecutive weeks (ending this or last week) both partners fully completed.
+async function checkinStreak(today) {
+  const { rows } = await query(
+    `SELECT to_char(c.week_start, 'YYYY-MM-DD') AS ws,
+            count(*) FILTER (WHERE ca.body <> '') AS filled
+       FROM checkin c LEFT JOIN checkin_answer ca ON ca.checkin_id = c.id
+      GROUP BY c.week_start`
+  );
+  const need = 2 * WEEKLY_KEYS.length;
+  const complete = new Set(rows.filter((r) => Number(r.filled) >= need).map((r) => r.ws));
+  const cur = new Date(`${weekStart(today)}T00:00:00`);
+  if (!complete.has(fmtDay(cur))) cur.setDate(cur.getDate() - 7); // this week not done yet
+  let streak = 0;
+  while (complete.has(fmtDay(cur))) {
+    streak++;
+    cur.setDate(cur.getDate() - 7);
+  }
+  return streak;
+}
+
+router.get('/checkin', requireUser, async (req, res) => {
+  const partner = await partnerOf(req.user.id);
+  const today = appToday();
+  const ws = weekStart(today);
+  const { id, answersByUser } = await loadCheckin(ws);
+  const iDone = checkinDone(answersByUser, req.user.id);
+  const pDone = partner ? checkinDone(answersByUser, partner.id) : false;
+  const revealed = iDone && pDone;
+  const [reactions, comments] =
+    id && revealed
+      ? await Promise.all([reactionsForTargets('checkin', [id]), commentsForTargets('checkin', [id])])
+      : [[], []];
+  res.json({
+    id,
+    weekStart: ws,
+    prompts: WEEKLY_PROMPTS,
+    partnerName: partner?.display_name || 'them',
+    mine: answersByUser.get(req.user.id) || {},
+    theirs: revealed && partner ? answersByUser.get(partner.id) || {} : null,
+    iSubmitted: iDone,
+    partnerSubmitted: pDone,
+    revealed,
+    streak: await checkinStreak(today),
+    reactions: reactions.map((r) => ({ userId: r.user_id, emoji: r.emoji })),
+    comments: comments.map(shapeComment),
+  });
+});
+
+router.post('/checkin', requireUser, async (req, res) => {
+  const today = appToday();
+  const ws = weekStart(today);
+  const partner = await partnerOf(req.user.id);
+  const before = await loadCheckin(ws);
+  const alreadyRevealed = checkinDone(before.answersByUser, req.user.id) && partner && checkinDone(before.answersByUser, partner.id);
+  if (alreadyRevealed) return res.status(409).json({ error: 'It’s already revealed — no more edits.' });
+
+  let id = before.id;
+  if (!id) {
+    const r = await query(
+      'INSERT INTO checkin (week_start) VALUES ($1::date) ON CONFLICT (week_start) DO UPDATE SET week_start = EXCLUDED.week_start RETURNING id',
+      [ws]
+    );
+    id = r.rows[0].id;
+  }
+  const answers = Array.isArray(req.body?.answers) ? req.body.answers : [];
+  for (const a of answers) {
+    const key = String(a?.promptKey || '');
+    if (!WEEKLY_KEYS.includes(key)) continue;
+    const body = String(a?.body || '').trim().slice(0, 1000);
+    await query(
+      `INSERT INTO checkin_answer (checkin_id, user_id, prompt_key, body) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (checkin_id, user_id, prompt_key) DO UPDATE SET body = EXCLUDED.body, updated_at = now()`,
+      [id, req.user.id, key, body]
+    );
+  }
+  const after = await loadCheckin(ws);
+  const nowRevealed = checkinDone(after.answersByUser, req.user.id) && partner && checkinDone(after.answersByUser, partner.id);
+  if (partner)
+    notify(partner.id, {
+      title: nowRevealed
+        ? `${req.user.display_name} finished the weekly check-in — it’s revealed`
+        : `${req.user.display_name} did this week’s check-in`,
+      body: '',
+    });
+  res.json({ ok: true, revealed: nowRevealed });
+});
+
+router.get('/checkin/history', requireUser, async (req, res) => {
+  const partner = await partnerOf(req.user.id);
+  const { rows } = await query(
+    "SELECT id, to_char(week_start, 'YYYY-MM-DD') AS ws FROM checkin ORDER BY week_start DESC LIMIT 26"
+  );
+  const weeks = [];
+  for (const c of rows) {
+    const { answersByUser } = await loadCheckin(c.ws);
+    if (!(checkinDone(answersByUser, req.user.id) && partner && checkinDone(answersByUser, partner.id))) continue;
+    weeks.push({
+      id: c.id,
+      weekStart: c.ws,
+      prompts: WEEKLY_PROMPTS,
+      mine: answersByUser.get(req.user.id) || {},
+      theirs: partner ? answersByUser.get(partner.id) || {} : {},
+      partnerName: partner?.display_name || 'them',
+    });
+  }
+  res.json({ weeks });
+});
+
 // Played keys + the shared "Knowing You" points total.
 router.get('/games/used', requireUser, async (_req, res) => {
   const [used, total] = await Promise.all([query('SELECT game_key FROM game_used'), knowingTotal()]);
@@ -1679,7 +1895,7 @@ const REACTION_EMOJI = ['❤️', '🔥', '😈', '😂', '🥹', '👀'];
 
 router.post('/reactions', requireUser, async (req, res) => {
   const { targetKind, targetId, emoji } = req.body || {};
-  if (!['question', 'response', 'reveal', 'event', 'thisthat', 'list', 'daily', 'coupon'].includes(targetKind))
+  if (!['question', 'response', 'reveal', 'event', 'thisthat', 'list', 'daily', 'coupon', 'gratitude', 'checkin'].includes(targetKind))
     return res.status(400).json({ error: 'Bad target.' });
 
   // Confirm the target is part of a share you're in, and figure out whether
@@ -1706,6 +1922,11 @@ router.post('/reactions', requireUser, async (req, res) => {
   } else if (targetKind === 'coupon') {
     const { rows } = await query('SELECT from_id, to_id FROM coupon WHERE id = $1 AND is_removed = false', [targetId]);
     if (rows[0] && (rows[0].from_id === req.user.id || rows[0].to_id === req.user.id)) member = true;
+  } else if (targetKind === 'gratitude') {
+    const { rows } = await query('SELECT from_id, to_id FROM gratitude WHERE id = $1 AND is_removed = false', [targetId]);
+    if (rows[0] && (rows[0].from_id === req.user.id || rows[0].to_id === req.user.id)) member = true;
+  } else if (targetKind === 'checkin') {
+    if (await checkinRevealed(targetId)) member = true;
   } else if (targetKind === 'question') {
     const { rows } = await query('SELECT asker_id, recipient_id FROM question WHERE id = $1', [targetId]);
     const q = rows[0];

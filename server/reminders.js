@@ -5,6 +5,7 @@
 import { query } from './db.js';
 import { notify } from './push.js';
 import { promptForDay, appToday, appClock, APP_TZ } from './daily.js';
+import { weekStart, WEEKLY_KEYS } from './rituals.js';
 
 const tasks = [];
 // Register a scheduled task: fn({ hour, minute, today }) → runs every poll.
@@ -38,6 +39,41 @@ function dailyReminderTask({ hour, minute, today }) {
   sendDailyReminders().catch((e) => console.error('daily reminder error:', e?.message));
 }
 registerScheduledTask(dailyReminderTask);
+
+// Gratitude nudge at 8pm if you haven't added one today.
+let lastGratitudeKey = null;
+async function gratitudeReminderTask({ hour, minute, today }) {
+  if (minute !== 0 || hour !== 20 || lastGratitudeKey === today) return;
+  lastGratitudeKey = today;
+  const { rows: users } = await query('SELECT id FROM app_user');
+  for (const u of users) {
+    const added = await query('SELECT 1 FROM gratitude WHERE from_id = $1 AND day = $2::date', [u.id, today]);
+    if (!added.rows[0]) await notify(u.id, { title: '🌷 A gratitude for today?', body: 'One little thing you appreciated.' });
+  }
+}
+registerScheduledTask(gratitudeReminderTask);
+
+// Weekly check-in nudge Sunday 6pm if you haven't finished this week's.
+let lastWeeklyKey = null;
+async function weeklyReminderTask({ hour, minute, today }) {
+  if (minute !== 0 || hour !== 18) return;
+  if (new Date(`${today}T00:00:00`).getDay() !== 0) return; // Sunday only
+  const ws = weekStart(today);
+  if (lastWeeklyKey === ws) return;
+  lastWeeklyKey = ws;
+  const ck = await query('SELECT id FROM checkin WHERE week_start = $1::date', [ws]);
+  const id = ck.rows[0]?.id;
+  const { rows: users } = await query('SELECT id FROM app_user');
+  for (const u of users) {
+    let done = false;
+    if (id) {
+      const n = await query("SELECT count(*)::int AS c FROM checkin_answer WHERE checkin_id = $1 AND user_id = $2 AND body <> ''", [id, u.id]);
+      done = n.rows[0].c >= WEEKLY_KEYS.length;
+    }
+    if (!done) await notify(u.id, { title: '🫶 Weekly check-in', body: 'Take a few minutes together this week.' });
+  }
+}
+registerScheduledTask(weeklyReminderTask);
 
 function tick() {
   const { hour, minute } = appClock();
