@@ -125,6 +125,11 @@ CREATE INDEX IF NOT EXISTS attachment_response_idx ON attachment (response_id);
 ALTER TABLE attachment ADD COLUMN IF NOT EXISTS storage TEXT NOT NULL DEFAULT 'db'; -- 'db' | 'r2'
 ALTER TABLE attachment ADD COLUMN IF NOT EXISTS storage_key TEXT;                   -- R2 object key
 ALTER TABLE attachment ALTER COLUMN bytes DROP NOT NULL;
+-- Cross-platform transcode: videos get a web-friendly H.264 MP4 alongside the
+-- original. Served in place of the original once done.
+ALTER TABLE attachment ADD COLUMN IF NOT EXISTS transcode_status TEXT NOT NULL DEFAULT 'none'; -- none|pending|done|failed
+ALTER TABLE attachment ADD COLUMN IF NOT EXISTS web_key TEXT;
+ALTER TABLE attachment ADD COLUMN IF NOT EXISTS web_mime TEXT;
 
 -- Append-only trail of everything that happened.
 CREATE TABLE IF NOT EXISTS activity_log (

@@ -1,0 +1,6 @@
+# Add ffmpeg to the Railway (nixpacks) build for server-side video transcoding.
+# aptPkgs appends to the setup phase without replacing the auto-detected Node
+# toolchain. If ffmpeg is ever unavailable, the app still runs — the transcoder
+# checks for it on boot and simply stays off.
+[phases.setup]
+aptPkgs = ["ffmpeg"]

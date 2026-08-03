@@ -1,7 +1,10 @@
-// Capped image compression. Only oversized photos are touched — anything at or
-// under the caps uploads at original quality — so this shrinks the outliers
-// most likely to fail on weak signal without degrading normal photos. Any
-// failure falls back to the original file, so it can never block an upload.
+// Client-side image prep before upload:
+//   1. HEIC/HEIF (iPhone default) is ALWAYS converted to JPEG — it's Apple-only,
+//      so this makes photos viewable everywhere. (Runs on iOS Safari, where the
+//      photo originates and the canvas can decode HEIC.)
+//   2. Otherwise, capped compression: only oversized photos are downscaled;
+//      anything within the caps uploads untouched.
+// Any failure falls back to the original file, so it can never block an upload.
 
 const MAX_DIM = 3000; // longest side, px
 const MAX_BYTES = 4.5 * 1024 * 1024; // ~4.5 MB
@@ -12,14 +15,17 @@ export async function maybeCompressImage(file) {
     if (!file || typeof file.type !== 'string' || !file.type.startsWith('image/')) return file;
     if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') return file;
 
+    const isHeic = /image\/(heic|heif)/i.test(file.type) || /\.(heic|heif)$/i.test(file.name || '');
+
     // Decode with EXIF orientation applied so we don't rotate the photo.
     const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => null);
     if (!bmp) return file;
 
     const longest = Math.max(bmp.width, bmp.height);
-    if (longest <= MAX_DIM && file.size <= MAX_BYTES) {
+    // HEIC must always be re-encoded (compatibility); others only if oversized.
+    if (!isHeic && longest <= MAX_DIM && file.size <= MAX_BYTES) {
       bmp.close?.();
-      return file; // within caps — leave it exactly as-is
+      return file;
     }
 
     const scale = Math.min(1, MAX_DIM / longest);
@@ -37,7 +43,10 @@ export async function maybeCompressImage(file) {
     bmp.close?.();
 
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY));
-    if (!blob || blob.size >= file.size) return file; // no real gain — keep original
+    if (!blob) return file;
+    // For non-HEIC, keep the original if the JPEG isn't actually smaller. For
+    // HEIC we always take the JPEG even if larger — compatibility is the point.
+    if (!isHeic && blob.size >= file.size) return file;
     const name = (file.name || 'photo').replace(/\.[^.]+$/, '') + '.jpg';
     return new File([blob], name, { type: 'image/jpeg' });
   } catch {

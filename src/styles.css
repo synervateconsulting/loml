@@ -653,6 +653,10 @@ body::before {
   font-size: 12px;
   color: var(--muted);
 }
+.media__opt {
+  color: var(--candle);
+  font-style: italic;
+}
 
 /* ----------------------------------------------------------- media capture */
 

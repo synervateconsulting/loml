@@ -184,7 +184,7 @@ async function attachmentsFor(questionIds, responseIds) {
   if (!questionIds.length && !responseIds.length) return [];
   const { rows } = await query(
     `SELECT id, owner_kind, question_id, response_id, media_kind, mime_type,
-            file_name, byte_size, duration_secs, is_removed, created_at
+            file_name, byte_size, duration_secs, is_removed, created_at, transcode_status
        FROM attachment
       WHERE (question_id = ANY($1::uuid[]) OR response_id = ANY($2::uuid[]))
       ORDER BY created_at`,
@@ -998,10 +998,13 @@ router.get('/attachments/:id', requireUser, async (req, res) => {
     return res.status(403).json({ error: 'Not yours to open.' });
 
   // Stored in R2: auth is done, hand off to a short-lived presigned URL. R2
-  // serves the bytes and Range requests directly (streaming, seeking).
+  // serves the bytes and Range requests directly (streaming, seeking). Prefer
+  // the transcoded web version once it's ready.
   if (a.storage === 'r2' && a.storage_key) {
-    const { mime } = effectiveMedia(a);
-    const url = await presignGet(a.storage_key, { mime, fileName: a.file_name });
+    const useWeb = a.transcode_status === 'done' && a.web_key;
+    const key = useWeb ? a.web_key : a.storage_key;
+    const mime = useWeb ? a.web_mime || 'video/mp4' : effectiveMedia(a).mime;
+    const url = await presignGet(key, { mime, fileName: a.file_name });
     res.setHeader('Cache-Control', 'private, no-store'); // don't cache the redirect to an expiring URL
     return res.redirect(302, url);
   }

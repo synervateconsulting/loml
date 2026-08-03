@@ -8,6 +8,7 @@ import api from './routes.js';
 import adminApi from './admin.js';
 import { startDailyReminders } from './reminders.js';
 import { backfillScores } from './scoring.js';
+import { startTranscoder } from './transcode.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.join(__dirname, '..', 'dist');
@@ -44,6 +45,7 @@ migrate()
   .then(() => {
     app.listen(port, '0.0.0.0', () => console.log(`loml listening on ${port}`));
     startDailyReminders();
+    startTranscoder().catch((err) => console.error('Transcoder failed to start:', err));
   })
   .catch((err) => {
     console.error('Startup failed:', err);
