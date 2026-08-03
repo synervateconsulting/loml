@@ -63,11 +63,14 @@ const hostOf = (url) => {
   }
 };
 
-async function uploadStaged({ staged, setStaged, ownerKind, questionId, responseId }) {
+async function uploadStaged({ staged, setStaged, ownerKind, questionId, responseId, onProgress, signal }) {
   const remaining = [...staged];
+  const total = staged.length;
   try {
     while (remaining.length) {
       const it = remaining[0];
+      const idx = total - remaining.length + 1; // 1-based
+      onProgress?.({ index: idx, total, pct: 0 });
       await api.uploadAttachment({
         ownerKind,
         questionId,
@@ -76,13 +79,38 @@ async function uploadStaged({ staged, setStaged, ownerKind, questionId, response
         fileName: it.fileName,
         mimeType: it.mimeType,
         durationSecs: it.durationSecs,
+        onProgress: (pct) => onProgress?.({ index: idx, total, pct }),
+        signal,
       });
       if (it.url) URL.revokeObjectURL(it.url);
       remaining.shift();
     }
+    onProgress?.(null); // done
+  } catch (err) {
+    onProgress?.(null);
+    throw err;
   } finally {
     setStaged(remaining);
   }
+}
+
+// Visible upload indicator so a slow upload never looks like a frozen app.
+export function UploadStatus({ upload }) {
+  if (!upload) return null;
+  const { index, total, pct } = upload;
+  return (
+    <div className="uploadstatus" role="status" aria-live="polite">
+      <div className="uploadstatus__row">
+        <span className="uploadstatus__spin" aria-hidden="true" />
+        <span className="uploadstatus__text">
+          Uploading {total > 1 ? `file ${index} of ${total}` : 'your file'}… {pct}%
+        </span>
+      </div>
+      <div className="uploadstatus__bar">
+        <span className="uploadstatus__fill" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
 }
 
 // Lock the page behind an open sheet. Reference-counted so a stacked Confirm
@@ -207,8 +235,10 @@ export function ShareModal({
   const [staged, setStaged] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [upload, setUpload] = useState(null); // { index, total, pct } while uploading
   const [ask, confirmNode] = useConfirm();
   const createdId = useRef(null);
+  const uploadAbort = useRef(null); // AbortController while an upload is in flight
 
   const copy = COMPOSE[kind];
   const song = kind === 'song';
@@ -216,13 +246,22 @@ export function ShareModal({
   const guess = kind === 'guess';
   const blind = reveal || guess; // the "your answer" textarea kinds
   const tt = PICK_KINDS.includes(kind); // this_that / predict / wyr builder
+  const hasFiles = !tt && !blind && staged.length > 0; // attachments to upload
   const linkOk = !song || /^https?:\/\//i.test(link.trim());
   const canSend =
     Boolean(title.trim()) && linkOk && (!blind || answer.trim()) && (!tt || itemsAreComplete(items)) && !busy;
   const itemsDirty = tt && items.some((it) => it.leftLabel.trim() || it.rightLabel.trim() || it.choice);
   const dirty =
     Boolean(title.trim() || detail.trim() || link.trim() || artist.trim() || answer.trim()) || staged.length > 0 || itemsDirty;
-  const cancel = () => (dirty ? ask(discardSteps(kind), onClose) : onClose());
+  const cancel = () => {
+    if (busy) {
+      // Mid-upload: let "Cancel upload" abort it (the draft stays hidden and is
+      // swept later). Otherwise a send in progress can't be dismissed.
+      if (upload && uploadAbort.current) uploadAbort.current.abort();
+      return;
+    }
+    return dirty ? ask(discardSteps(kind), onClose) : onClose();
+  };
 
   const confirmBody = reveal
     ? 'They answer blind too — you both see each other only once they’ve replied.'
@@ -249,6 +288,9 @@ export function ShareModal({
             detail,
             kind,
             spicy,
+            // With attachments, create hidden (draft) and finalize after upload,
+            // so the share is never delivered without its photo.
+            ...(hasFiles ? { draft: true } : {}),
             ...(usedKey ? { usedKey } : {}),
             ...(song ? { link: link.trim(), artist: artist.trim() } : {}),
             ...(blind ? { answer } : {}),
@@ -266,11 +308,31 @@ export function ShareModal({
           });
           createdId.current = id;
         }
-        if (!tt) await uploadStaged({ staged, setStaged, ownerKind: 'question', questionId: createdId.current });
+        if (hasFiles) {
+          const controller = new AbortController();
+          uploadAbort.current = controller;
+          try {
+            await uploadStaged({
+              staged,
+              setStaged,
+              ownerKind: 'question',
+              questionId: createdId.current,
+              onProgress: setUpload,
+              signal: controller.signal,
+            });
+            await api.finalizeShare(createdId.current); // now it goes live
+          } finally {
+            uploadAbort.current = null;
+          }
+          setUpload(null);
+        }
         onDone();
       } catch (err) {
-        setError(err.message);
+        setUpload(null);
         setBusy(false);
+        // A cancelled upload isn't an error — the draft stays hidden (never
+        // sent) and the files remain staged so it's easy to try again.
+        setError(err.cancelled ? '' : err.message);
       }
     });
 
@@ -282,11 +344,11 @@ export function ShareModal({
         title={copy.title}
         footer={
           <>
-            <button type="button" className="btn btn--ghost" onClick={cancel}>
-              Cancel
+            <button type="button" className="btn btn--ghost" onClick={cancel} disabled={busy && !upload}>
+              {busy && upload ? 'Cancel upload' : 'Cancel'}
             </button>
             <button type="button" className="btn btn--primary" onClick={send} disabled={!canSend}>
-              {copy.send}
+              {busy && hasFiles ? 'Sending…' : copy.send}
             </button>
           </>
         }
@@ -392,6 +454,7 @@ export function ShareModal({
         {!blind && !tt && (
           <div className="field">
             <span className="field__label">Voice, video or a file</span>
+            <UploadStatus upload={upload} />
             <MediaCapture items={staged} onChange={setStaged} disabled={busy} />
           </div>
         )}
@@ -418,6 +481,7 @@ export function RespondModal({ question, meId, onClose, onDone, onRefresh }) {
   const [staged, setStaged] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [upload, setUpload] = useState(null);
   const [ask, confirmNode] = useConfirm();
   const createdId = useRef(null);
 
@@ -457,7 +521,7 @@ export function RespondModal({ question, meId, onClose, onDone, onRefresh }) {
               const { id } = await api.answer(question.id, body);
               createdId.current = id;
             }
-            await uploadStaged({ staged, setStaged, ownerKind: 'response', responseId: createdId.current });
+            await uploadStaged({ staged, setStaged, ownerKind: 'response', responseId: createdId.current, onProgress: setUpload });
             onDone();
           } catch (err) {
             setError(err.message);
@@ -510,6 +574,7 @@ export function RespondModal({ question, meId, onClose, onDone, onRefresh }) {
         {!reveal && (
           <div className="field">
             <span className="field__label">{copy.mediaLabel}</span>
+            <UploadStatus upload={upload} />
             <MediaCapture items={staged} onChange={setStaged} disabled={busy} />
           </div>
         )}
@@ -534,6 +599,7 @@ export function EditQuestionModal({ question, onClose, onDone }) {
   const [staged, setStaged] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [upload, setUpload] = useState(null);
   const [ask, confirmNode] = useConfirm();
   const savedText = useRef(false);
 
@@ -558,7 +624,7 @@ export function EditQuestionModal({ question, onClose, onDone }) {
           });
           savedText.current = true;
         }
-        if (!reveal) await uploadStaged({ staged, setStaged, ownerKind: 'question', questionId: question.id });
+        if (!reveal) await uploadStaged({ staged, setStaged, ownerKind: 'question', questionId: question.id, onProgress: setUpload });
         onDone();
       } catch (err) {
         setError(err.message);
@@ -654,7 +720,8 @@ export function EditQuestionModal({ question, onClose, onDone }) {
             <Attachments items={question.attachments} onRemove={removeAttachment} />
             <div className="field">
               <span className="field__label">Add voice, video or a file</span>
-              <MediaCapture items={staged} onChange={setStaged} disabled={busy} />
+              <UploadStatus upload={upload} />
+            <MediaCapture items={staged} onChange={setStaged} disabled={busy} />
             </div>
           </>
         )}
@@ -785,6 +852,7 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone, onRe
   const [staged, setStaged] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [upload, setUpload] = useState(null);
   const [ask, confirmNode] = useConfirm();
   const savedText = useRef(false);
 
@@ -830,7 +898,7 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone, onRe
           await api.editAnswer(question.response.id, body);
           savedText.current = true;
         }
-        await uploadStaged({ staged, setStaged, ownerKind: 'response', responseId: question.response.id });
+        await uploadStaged({ staged, setStaged, ownerKind: 'response', responseId: question.response.id, onProgress: setUpload });
         setDisplayBody(body); // reflect the saved answer back in the read-only view
         savedText.current = false;
         setBusy(false);
@@ -936,6 +1004,7 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone, onRe
         {showEditor && (
           <div className="field">
             <span className="field__label">Add voice, video or a file</span>
+            <UploadStatus upload={upload} />
             <MediaCapture items={staged} onChange={setStaged} disabled={busy} />
           </div>
         )}

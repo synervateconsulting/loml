@@ -1786,6 +1786,53 @@ body::before {
   flex: 1;
 }
 
+/* Visible upload progress */
+.uploadstatus {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+}
+.uploadstatus__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.uploadstatus__text {
+  font-size: 13px;
+  color: var(--cream);
+  font-variant-numeric: tabular-nums;
+}
+.uploadstatus__spin {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--edge);
+  border-top-color: var(--candle);
+  animation: uploadspin 0.8s linear infinite;
+}
+@keyframes uploadspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.uploadstatus__bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--night-2);
+  overflow: hidden;
+}
+.uploadstatus__fill {
+  display: block;
+  height: 100%;
+  background: var(--candle);
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
 /* Comment thread on games & the daily question */
 .cthread {
   margin-top: 10px;

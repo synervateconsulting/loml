@@ -1,3 +1,5 @@
+import { maybeCompressImage } from './imageCompress.js';
+
 async function request(method, path, body) {
   const res = await fetch(`/api${path}`, {
     method,
@@ -35,6 +37,8 @@ export const api = {
   questions: () => request('GET', '/questions'),
   // fields: { title, detail, kind, link?, answer? }
   ask: (fields) => request('POST', '/questions', fields),
+  // Send a draft share (created hidden while its attachments upload) for real.
+  finalizeShare: (id) => request('POST', `/questions/${id}/finalize`),
   editQuestion: (id, title, detail, extra = {}) =>
     request('PATCH', `/questions/${id}`, { title, detail, ...extra }),
   removeQuestion: (id) => request('POST', `/questions/${id}/remove`),
@@ -88,33 +92,115 @@ export const api = {
   declineDateRequest: (id) => request('POST', `/date-requests/${id}/decline`),
   cancelDateRequest: (id) => request('POST', `/date-requests/${id}/cancel`),
   ackEventNotification: (id) => request('POST', `/calendar/notifications/${id}/ack`),
-  uploadAttachment: async ({ ownerKind, questionId, responseId, file, fileName, mimeType, durationSecs }) => {
-    const form = new FormData();
-    form.append('ownerKind', ownerKind);
-    if (questionId) form.append('questionId', questionId);
-    if (responseId) form.append('responseId', responseId);
-    if (durationSecs != null) form.append('durationSecs', String(durationSecs));
+  // Upload one attachment. Oversized photos are downscaled first (capped
+  // compression), real upload progress is reported via onProgress(pct), and
+  // transient failures (dropped/weak connection, 5xx) are retried with backoff.
+  uploadAttachment: async ({ ownerKind, questionId, responseId, file, fileName, mimeType, durationSecs, onProgress, signal }) => {
+    const toSend = await maybeCompressImage(file);
     // Pin the Content-Type onto the multipart part. A recorded Blob's type can
     // otherwise be dropped, and the server would receive a generic mime.
-    const name = fileName || file.name || 'recording';
-    const type = mimeType || file.type || '';
-    const payload = type ? new File([file], name, { type }) : file;
-    form.append('file', payload, name);
+    const name = fileName || toSend.name || file.name || 'recording';
+    const type = mimeType || toSend.type || file.type || '';
+    const payload = type ? new File([toSend], name, { type }) : toSend;
 
-    const res = await fetch('/api/attachments', {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: form,
-    });
-    let data = null;
-    try {
-      data = await res.json();
-    } catch {
-      /* empty body is fine */
+    const buildForm = () => {
+      const form = new FormData();
+      form.append('ownerKind', ownerKind);
+      if (questionId) form.append('questionId', questionId);
+      if (responseId) form.append('responseId', responseId);
+      if (durationSecs != null) form.append('durationSecs', String(durationSecs));
+      form.append('file', payload, name);
+      return form;
+    };
+
+    // Big files (videos) aren't auto-retried — re-sending the whole thing on a
+    // flaky link just burns data; the user can retry manually. Small files retry
+    // through transient failures.
+    const LARGE = 15 * 1024 * 1024;
+    const attempts = payload.size > LARGE ? 1 : 3;
+    for (let i = 0; ; i++) {
+      try {
+        return await xhrUpload(buildForm(), onProgress, signal);
+      } catch (err) {
+        if (err.cancelled) throw err; // user aborted — stop immediately
+        // Don't retry a definitive client error (too large, locked, etc.).
+        const retriable = !err.status || err.status >= 500;
+        if (!retriable || i >= attempts - 1) throw err;
+        onProgress?.(0);
+        await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
+      }
     }
-    if (!res.ok) throw new Error(data?.error || 'That file would not upload. Try again.');
-    return data;
   },
 };
+
+// XHR (not fetch) so we get upload progress events, which drive the visible
+// "Uploading…" indicator. Uses a STALL watchdog (fail only if no progress for a
+// while) rather than a total-time limit, so a slow-but-moving upload — the
+// normal case for a large video — is never cut off. `signal` aborts it (Cancel).
+function xhrUpload(form, onProgress, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      const e = new Error('Upload cancelled.');
+      e.cancelled = true;
+      return reject(e);
+    }
+    const STALL_MS = 75000; // no progress for this long → treat as dead
+    const xhr = new XMLHttpRequest();
+    let reason = null; // 'user' | 'stall'
+    let stallTimer;
+    const bump = () => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        reason = 'stall';
+        xhr.abort();
+      }, STALL_MS);
+    };
+    const onAbort = () => {
+      reason = 'user';
+      xhr.abort();
+    };
+    const cleanup = () => {
+      clearTimeout(stallTimer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+
+    xhr.open('POST', '/api/attachments');
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (e) => {
+      bump();
+      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      cleanup();
+      let data = null;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        /* empty body is fine */
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.(100);
+        resolve(data);
+      } else {
+        const err = new Error(data?.error || 'That file would not upload. Try again.');
+        err.status = xhr.status;
+        reject(err);
+      }
+    };
+    xhr.onerror = () => {
+      cleanup();
+      reject(new Error('Upload failed — check your connection and try again.'));
+    };
+    xhr.onabort = () => {
+      cleanup();
+      const err = new Error(reason === 'user' ? 'Upload cancelled.' : 'Upload stalled — check your connection and try again.');
+      if (reason === 'user') err.cancelled = true;
+      reject(err);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    bump(); // start the stall clock even before the first progress event
+    xhr.send(form);
+  });
+}
 
 export const attachmentUrl = (id) => `/api/attachments/${id}`;

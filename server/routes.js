@@ -166,7 +166,7 @@ const QUESTION_SELECT = `
     JOIN app_user asker ON asker.id = q.asker_id
     JOIN app_user recip ON recip.id = q.recipient_id
     LEFT JOIN response r ON r.question_id = q.id AND r.is_removed = false
-   WHERE q.is_removed = false
+   WHERE q.is_removed = false AND q.is_draft = false
 `;
 
 async function attachmentsFor(questionIds, responseIds) {
@@ -468,6 +468,10 @@ router.post('/questions', requireUser, async (req, res) => {
   const spicy = Boolean(req.body?.spicy);
   const usedKey = (req.body?.usedKey || '').trim().slice(0, 120); // deck prompt / template it came from
   const kind = SHARE_KINDS.includes(req.body?.kind) ? req.body.kind : 'question';
+  // A share carrying attachments is created hidden (draft); the client uploads
+  // the file(s), then calls /finalize to actually send it. This guarantees a
+  // share is never delivered without its attachment.
+  const draft = Boolean(req.body?.draft);
   if (!title) return res.status(400).json({ error: 'Give it a title.' });
   if (kind === 'song' && !/^https?:\/\//i.test(link))
     return res.status(400).json({ error: 'Paste a link to the song.' });
@@ -502,9 +506,9 @@ router.post('/questions', requireUser, async (req, res) => {
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `INSERT INTO question (asker_id, recipient_id, kind, title, detail, link, artist, is_spicy)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-      [req.user.id, partner.id, kind, title, detail, kind === 'song' ? link : null, kind === 'song' ? artist : null, spicy]
+      `INSERT INTO question (asker_id, recipient_id, kind, title, detail, link, artist, is_spicy, is_draft)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+      [req.user.id, partner.id, kind, title, detail, kind === 'song' ? link : null, kind === 'song' ? artist : null, spicy, draft]
     );
     const id = rows[0].id;
     await client.query(
@@ -535,24 +539,48 @@ router.post('/questions', requireUser, async (req, res) => {
       }
     }
     await client.query('COMMIT');
-    // Mark the source deck prompt / template as played (couple-wide, replayable).
-    if (usedKey)
-      await query('INSERT INTO game_used (game_key, used_by) VALUES ($1, $2) ON CONFLICT (game_key) DO NOTHING', [
-        usedKey,
-        req.user.id,
-      ]);
-    await logActivity(req.user.id, 'shared', 'question', id, { title, kind, spicy });
-    notify(
-      partner.id,
-      spicy ? discreetShare(req.user.display_name) : { title: newShareTitle(req.user.display_name, kind), body: title }
-    );
-    res.status(201).json({ id });
+    // A draft isn't "sent" yet — hold the played-marker, activity and push until
+    // /finalize (after its attachments upload). Non-drafts send immediately.
+    if (!draft) {
+      // Mark the source deck prompt / template as played (couple-wide, replayable).
+      if (usedKey)
+        await query('INSERT INTO game_used (game_key, used_by) VALUES ($1, $2) ON CONFLICT (game_key) DO NOTHING', [
+          usedKey,
+          req.user.id,
+        ]);
+      await logActivity(req.user.id, 'shared', 'question', id, { title, kind, spicy });
+      notify(
+        partner.id,
+        spicy ? discreetShare(req.user.display_name) : { title: newShareTitle(req.user.display_name, kind), body: title }
+      );
+    }
+    res.status(201).json({ id, draft });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
   } finally {
     client.release();
   }
+});
+
+// Finalize a draft share once its attachments have uploaded: flip it live and
+// fire the same activity + push a normal create would have. Idempotent-ish —
+// a non-draft (already sent) just returns ok.
+router.post('/questions/:id/finalize', requireUser, async (req, res) => {
+  const { rows } = await query('SELECT * FROM question WHERE id = $1 AND is_removed = false', [req.params.id]);
+  const q = rows[0];
+  if (!q) return res.status(404).json({ error: 'Not found.' });
+  if (q.asker_id !== req.user.id) return res.status(403).json({ error: "This isn't yours." });
+  if (!q.is_draft) return res.json({ ok: true }); // already sent
+  await query('UPDATE question SET is_draft = false, updated_at = now() WHERE id = $1', [q.id]);
+  const partner = await partnerOf(req.user.id);
+  await logActivity(req.user.id, 'shared', 'question', q.id, { title: q.title, kind: q.kind, spicy: q.is_spicy });
+  if (partner)
+    notify(
+      partner.id,
+      q.is_spicy ? discreetShare(req.user.display_name) : { title: newShareTitle(req.user.display_name, q.kind), body: q.title }
+    );
+  res.json({ ok: true });
 });
 
 // Only the asker can edit, and only while it is still unanswered/unacknowledged.
