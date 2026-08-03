@@ -2155,21 +2155,29 @@ body::before {
 }
 /* Fixed 3-across, 2-row layout (Shares/Keepsakes/Spicy · Lists/Rituals/Games).
    A grid — not wrapping flex — so the arrangement can never reflow to 2 or 4 per
-   row as labels or badges change. Columns are content-sized (min max-content) yet
-   share leftover space (1fr), so wider labels like "Keepsakes" never truncate. */
+   row as labels or badges change. Columns are minmax(0, 1fr): equal and fully
+   shrinkable, so the grid always fits its track and never overflows into (and
+   clips) the Share button. Tighter pill padding below keeps "Keepsakes" from
+   truncating within its third. */
 .navgrid {
   flex: 1;
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(3, minmax(max-content, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   align-content: center;
 }
 .navgrid .topnav__item {
   position: relative;
+  min-width: 0;
+  padding: 6px 9px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .sharebtn {
-  flex: 0 0 25%;
+  flex: 0 0 20%;
   display: flex;
   flex-direction: column;
   align-items: center;
