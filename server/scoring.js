@@ -130,14 +130,40 @@ export async function computeCouponScore() {
   return { points: count * COUPON_POINTS, count };
 }
 
-// Bingo points: +row for each board that hit a line, +full for each blackout.
+// Completed lines (each row, column and both diagonals) and whether the whole
+// card is done, for a set of done positions on a size×size board. This is the
+// single source of truth for both the score and the board's gold highlighting.
+export function bingoLines(size, doneSet) {
+  const at = (r, c) => r * size + c;
+  const seq = [...Array(size).keys()];
+  let lines = 0;
+  for (let r = 0; r < size; r++) if (seq.every((c) => doneSet.has(at(r, c)))) lines += 1;
+  for (let c = 0; c < size; c++) if (seq.every((r) => doneSet.has(at(r, c)))) lines += 1;
+  if (seq.every((i) => doneSet.has(at(i, i)))) lines += 1;
+  if (seq.every((i) => doneSet.has(at(i, size - 1 - i)))) lines += 1;
+  return { lines, full: doneSet.size >= size * size };
+}
+
+// Bingo points, counted live from the current squares: +row for EVERY completed
+// line on every board (a full 3×3 has 8), +full once per blackout. Because it's
+// live, the score always matches the gold lines shown on the board.
 export async function computeBingoScore() {
   const { rows } = await query(
-    'SELECT count(*) FILTER (WHERE awarded_row)::int AS lines, count(*) FILTER (WHERE awarded_full)::int AS full FROM bingo_board WHERE is_removed = false'
+    `SELECT b.size, array_agg(s.position) FILTER (WHERE s.done_at IS NOT NULL) AS done
+       FROM bingo_board b LEFT JOIN bingo_square s ON s.board_id = b.id
+      WHERE b.is_removed = false GROUP BY b.id, b.size`
   );
-  const lines = rows[0].lines;
-  const full = rows[0].full;
-  return { points: lines * BINGO_ROW_POINTS + full * BINGO_FULL_POINTS, lines, full };
+  let points = 0;
+  let lines = 0;
+  let full = 0;
+  for (const b of rows) {
+    const done = new Set((b.done || []).filter((p) => p !== null));
+    const res = bingoLines(b.size, done);
+    lines += res.lines;
+    if (res.full) full += 1;
+    points += res.lines * BINGO_ROW_POINTS + (res.full ? BINGO_FULL_POINTS : 0);
+  }
+  return { points, lines, full };
 }
 
 // One day apart? Compares two 'YYYY-MM-DD' strings by calendar days (UTC-safe).

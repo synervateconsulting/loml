@@ -22,7 +22,7 @@ const firstName = (name = '') => name.split(' ')[0];
 // width, which otherwise reflowed the whole grid when a dot appeared/vanished.
 const NAV = [
   ['shares', '💞', 'Shares'],
-  ['keepsakes', '⭐️', 'Keepsakes'],
+  ['keepsakes', '⭐️', 'Keepsake'],
   ['spicy', '🔥😈🔥', ''],
   ['lists', '📋', 'Lists'],
   ['rituals', '🌱', 'Rituals'],
@@ -39,6 +39,7 @@ export default function App() {
   const [gameScore, setGameScore] = useState(0);
   const [bondScore, setBondScore] = useState(0);
   const [scoreOpen, setScoreOpen] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
   const [daily, setDaily] = useState(null);
   const [gratitude, setGratitude] = useState(null);
   const [checkin, setCheckin] = useState(null);
@@ -406,7 +407,7 @@ export default function App() {
                 {resynced ? '✓' : '↺'}
               </button>
             )}
-            <button type="button" className="iconbtn" onClick={signOut} title="Sign out" aria-label="Sign out">
+            <button type="button" className="iconbtn" onClick={() => setConfirmLogout(true)} title="Log out" aria-label="Log out">
               👋
             </button>
           </div>
@@ -577,12 +578,37 @@ export default function App() {
             onStartWyr={startWyr}
             onStartGuess={startGuess}
             usedGames={usedGames}
+            users={listUsers}
             onChanged={load}
           />
         )}
       </main>
 
       {scoreOpen && <ScoreBoard onClose={() => setScoreOpen(false)} />}
+
+      {confirmLogout && (
+        <div className="scrim scrim--confirm" role="dialog" aria-modal="true" onMouseDown={() => setConfirmLogout(false)}>
+          <div className="confirm" onMouseDown={(e) => e.stopPropagation()}>
+            <h3 className="confirm__title">Log out of loml?</h3>
+            <p className="confirm__body">You’ll need your access key to sign back in.</p>
+            <div className="confirm__actions">
+              <button type="button" className="btn btn--ghost" onClick={() => setConfirmLogout(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn--danger"
+                onClick={() => {
+                  setConfirmLogout(false);
+                  signOut();
+                }}
+              >
+                Log out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {modal?.kind === 'share' && (
         <ShareModal

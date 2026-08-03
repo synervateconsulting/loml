@@ -18,6 +18,7 @@ import {
   computeShareScore,
   computeCouponScore,
   computeBingoScore,
+  bingoLines,
   gameTotal,
   bondTotal,
 } from './scoring.js';
@@ -2669,42 +2670,40 @@ router.post('/coupons/:id/revoke', requireUser, async (req, res) => {
 
 /* ------------------------------------------------------------- bingo */
 
-// Any full line, and whether the whole card is done, for a set of done squares.
-function bingoStatus(size, doneSet) {
-  const at = (r, c) => r * size + c;
-  let anyLine = false;
-  for (let r = 0; r < size; r++) if ([...Array(size).keys()].every((c) => doneSet.has(at(r, c)))) anyLine = true;
-  for (let c = 0; c < size; c++) if ([...Array(size).keys()].every((r) => doneSet.has(at(r, c)))) anyLine = true;
-  if ([...Array(size).keys()].every((i) => doneSet.has(at(i, i)))) anyLine = true;
-  if ([...Array(size).keys()].every((i) => doneSet.has(at(i, size - 1 - i)))) anyLine = true;
-  return { anyLine, full: doneSet.size >= size * size };
-}
-
 router.get('/bingo', requireUser, async (_req, res) => {
   const boards = await query(
-    `SELECT id, title, size, created_by, awarded_row, awarded_full, created_at
+    `SELECT id, title, size, created_by, created_at
        FROM bingo_board WHERE is_removed = false ORDER BY created_at DESC`
   );
   const bIds = boards.rows.map((b) => b.id);
   const squares = bIds.length
-    ? (await query('SELECT id, board_id, position, text, done_by, done_at FROM bingo_square WHERE board_id = ANY($1::uuid[]) ORDER BY position', [bIds])).rows
+    ? (
+        await query(
+          `SELECT s.id, s.board_id, s.position, s.text, s.done_by, s.done_at, u.display_name AS done_by_name
+             FROM bingo_square s LEFT JOIN app_user u ON u.id = s.done_by
+            WHERE s.board_id = ANY($1::uuid[]) ORDER BY s.position`,
+          [bIds]
+        )
+      ).rows
     : [];
   const [reactions, comments] = await Promise.all([reactionsForTargets('bingo', bIds), commentsForTargets('bingo', bIds)]);
   res.json(
-    boards.rows.map((b) => ({
-      id: b.id,
-      title: b.title,
-      size: b.size,
-      createdBy: b.created_by,
-      awardedRow: b.awarded_row,
-      awardedFull: b.awarded_full,
-      createdAt: b.created_at,
-      squares: squares
-        .filter((s) => s.board_id === b.id)
-        .map((s) => ({ id: s.id, position: s.position, text: s.text, doneBy: s.done_by, doneAt: s.done_at })),
-      reactions: reactions.filter((r) => r.target_id === String(b.id)).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
-      comments: commentsOn(comments, b.id),
-    }))
+    boards.rows.map((b) => {
+      const sq = squares.filter((s) => s.board_id === b.id);
+      const { lines, full } = bingoLines(b.size, new Set(sq.filter((s) => s.done_at).map((s) => s.position)));
+      return {
+        id: b.id,
+        title: b.title,
+        size: b.size,
+        createdBy: b.created_by,
+        lines, // number of completed lines right now (each worth +5)
+        full,
+        createdAt: b.created_at,
+        squares: sq.map((s) => ({ id: s.id, position: s.position, text: s.text, doneBy: s.done_by, doneByName: s.done_by_name, doneAt: s.done_at })),
+        reactions: reactions.filter((r) => r.target_id === String(b.id)).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
+        comments: commentsOn(comments, b.id),
+      };
+    })
   );
 });
 
@@ -2744,29 +2743,68 @@ router.post('/bingo', requireUser, async (req, res) => {
 
 router.post('/bingo/squares/:id/toggle', requireUser, async (req, res) => {
   const { rows } = await query(
-    `SELECT s.id, s.done_at, b.id AS board_id, b.size, b.awarded_row, b.awarded_full, b.is_removed
+    `SELECT s.id, s.done_at, b.id AS board_id, b.size, b.is_removed
        FROM bingo_square s JOIN bingo_board b ON b.id = s.board_id WHERE s.id = $1`,
     [req.params.id]
   );
   const sq = rows[0];
   if (!sq || sq.is_removed) return res.status(404).json({ error: 'Not found.' });
+
+  const donePositions = async () =>
+    new Set((await query('SELECT position FROM bingo_square WHERE board_id = $1 AND done_at IS NOT NULL', [sq.board_id])).rows.map((r) => r.position));
+  const before = bingoLines(sq.size, await donePositions());
   const next = !sq.done_at;
   if (next) await query('UPDATE bingo_square SET done_by = $1, done_at = now() WHERE id = $2', [req.user.id, sq.id]);
   else await query('UPDATE bingo_square SET done_by = NULL, done_at = NULL WHERE id = $1', [sq.id]);
+  const after = bingoLines(sq.size, await donePositions());
 
-  const done = await query('SELECT position FROM bingo_square WHERE board_id = $1 AND done_at IS NOT NULL', [sq.board_id]);
-  const { anyLine, full } = bingoStatus(sq.size, new Set(done.rows.map((r) => r.position)));
-  let newLine = false;
-  let newFull = false;
-  if (anyLine && !sq.awarded_row) {
-    await query('UPDATE bingo_board SET awarded_row = true WHERE id = $1', [sq.board_id]);
-    newLine = true;
+  // Celebrate only newly completed lines / a newly full card (for the flash).
+  res.json({
+    ok: true,
+    isDone: next,
+    newLines: Math.max(0, after.lines - before.lines),
+    newFull: after.full && !before.full,
+  });
+});
+
+// Edit a board's title and square wording in place. Editing preserves the
+// board: an unchanged square keeps its state, and a square whose text changed
+// keeps it too UNLESS it was marked done — a done square that's reworded is no
+// longer the same thing, so it's uncompleted. Size is fixed (rebuild for that).
+// Awarded flags are left as earned (same as toggling a square back off).
+router.post('/bingo/:id/edit', requireUser, async (req, res) => {
+  const title = (req.body?.title || '').trim().slice(0, 120);
+  const squares = (Array.isArray(req.body?.squares) ? req.body.squares : []).map((t) => String(t || '').trim().slice(0, 120));
+  if (!title) return res.status(400).json({ error: 'Name the board.' });
+
+  const { rows: brows } = await query('SELECT id, size FROM bingo_board WHERE id = $1 AND is_removed = false', [req.params.id]);
+  const board = brows[0];
+  if (!board) return res.status(404).json({ error: 'Not found.' });
+  if (squares.length !== board.size * board.size || squares.some((t) => !t))
+    return res.status(400).json({ error: `Give all ${board.size * board.size} squares.` });
+
+  const { rows: existing } = await query('SELECT id, position, text, done_at FROM bingo_square WHERE board_id = $1', [board.id]);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE bingo_board SET title = $1 WHERE id = $2', [title, board.id]);
+    for (const sq of existing) {
+      const nextText = squares[sq.position];
+      if (nextText === sq.text) continue; // unchanged — leave it (and its state) alone
+      if (sq.done_at) await client.query('UPDATE bingo_square SET text = $1, done_by = NULL, done_at = NULL WHERE id = $2', [nextText, sq.id]);
+      else await client.query('UPDATE bingo_square SET text = $1 WHERE id = $2', [nextText, sq.id]);
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
-  if (full && !sq.awarded_full) {
-    await query('UPDATE bingo_board SET awarded_full = true WHERE id = $1', [sq.board_id]);
-    newFull = true;
-  }
-  res.json({ ok: true, isDone: next, newLine, newFull });
+  await logActivity(req.user.id, 'edited_bingo', 'bingo', board.id, { title });
+  const partner = await partnerOf(req.user.id);
+  if (partner) notify(partner.id, { title: `${req.user.display_name} edited a bingo board`, body: title });
+  res.json({ ok: true });
 });
 
 router.post('/bingo/:id/remove', requireUser, async (req, res) => {
