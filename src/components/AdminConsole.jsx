@@ -2,6 +2,30 @@ import { useEffect, useState } from 'react';
 import { admin } from '../api.js';
 import { kindLabel } from '../shares.js';
 import { eventIcon, eventLabel, formatEventWhen } from '../calendar.js';
+import { PREDICT_TEMPLATES, WYR_TEMPLATES, GUESS_PROMPTS, THISTHAT_TEMPLATES } from '../thisthat.js';
+import { DECKS } from '../decks.js';
+
+// Resolve a game_used key (e.g. "tt:cozy", "deck:deeper:2", "guess:pet-peeve")
+// to a friendly category + title so a played tag reads plainly in the console.
+const byId = (arr) => Object.fromEntries(arr.map((t) => [t.id, t]));
+const TT = byId(THISTHAT_TEMPLATES);
+const PT = byId(PREDICT_TEMPLATES);
+const WYRT = byId(WYR_TEMPLATES);
+const GUESSP = byId(GUESS_PROMPTS);
+const DECKM = byId(DECKS);
+function playedLabel(key) {
+  const [prefix, a, b] = String(key).split(':');
+  if (prefix === 'tt') return { cat: 'This / That', text: TT[a]?.name || a };
+  if (prefix === 'pt') return { cat: 'Predict My Pick', text: PT[a]?.name || a };
+  if (prefix === 'wyr') return { cat: 'Would You Rather', text: WYRT[a]?.name || a };
+  if (prefix === 'guess') return { cat: 'Guess My Answer', text: GUESSP[a]?.text || a };
+  if (prefix === 'deck') {
+    const d = DECKM[a];
+    return { cat: `Deck · ${d?.name || a}`, text: d?.prompts?.[Number(b)] || `Prompt ${Number(b) + 1}` };
+  }
+  if (prefix === 'bingo') return { cat: 'Bingo', text: a };
+  return { cat: prefix || 'Game', text: key };
+}
 
 /* --------------------------------------------- app-style read-only previews */
 
@@ -268,8 +292,26 @@ export default function AdminConsole() {
         <p className="adm__muted">Knowing-You points: {d.games.points} (from {d.games.pointRows} games) · Played tags: {d.games.playedKeys}</p>
         <div className="adm__gamebtns">
           <button className="adm__del" onClick={() => ask({ title: 'Reset all Knowing-You points?', needle: 'RESET', preview: [`${d.games.pointRows} point rows`], run: () => admin.resetGames({ points: true }) })}>Reset points</button>
-          <button className="adm__del" onClick={() => ask({ title: 'Clear all “Played” tags?', needle: 'RESET', preview: [`${d.games.playedKeys} played keys`], run: () => admin.resetGames({ played: true }) })}>Clear played tags</button>
+          <button className="adm__del" disabled={!d.games.playedKeys} onClick={() => ask({ title: 'Clear ALL “Played” tags?', needle: 'RESET', preview: [`${d.games.playedKeys} played tag(s)`], run: () => admin.resetGames({ played: true }) })}>Clear all played tags</button>
         </div>
+
+        <p className="adm__muted adm__subhead">Played tags ({d.games.playedKeys}) — reset any one</p>
+        {(d.games.played || []).length === 0 ? (
+          <p className="adm__muted">No games tagged as played.</p>
+        ) : (
+          (d.games.played || []).map((g) => {
+            const l = playedLabel(g.key);
+            return (
+              <div key={g.key} className="adm__row">
+                <div className="adm__rowmain">
+                  <span className="adm__tag">{l.cat}{g.usedBy ? ` · ${g.usedBy}` : ''}{g.usedAt ? ` · ${g.usedAt}` : ''}</span>
+                  <span className="adm__q">{l.text}</span>
+                </div>
+                <button className="adm__del" onClick={() => ask({ title: 'Reset this played tag?', needle: 'RESET', preview: [`${l.cat}: ${l.text}`], run: () => admin.resetGames({ keys: [g.key] }) })}>Reset</button>
+              </div>
+            );
+          })
+        )}
       </section>
 
       {/* Preview panel */}

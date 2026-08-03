@@ -2794,6 +2794,8 @@ body::before {
 .adm__x { appearance: none; background: none; border: 0; color: var(--danger); cursor: pointer; font-size: 12px; margin-left: 6px; }
 .adm__del { flex: none; appearance: none; background: transparent; border: 1px solid rgba(232,117,122,0.4); color: var(--danger); border-radius: 999px; padding: 6px 12px; font: 600 12px var(--body); cursor: pointer; }
 .adm__gamebtns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.adm__subhead { margin-top: 16px; margin-bottom: 2px; }
+.adm__del:disabled { opacity: 0.4; cursor: default; }
 .adm__scrim { position: fixed; inset: 0; z-index: 55; background: rgba(10,4,7,0.8); display: flex; align-items: center; justify-content: center; padding: 18px; }
 .adm__rowbtn { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; text-align: left; appearance: none; background: none; border: 0; color: var(--cream); cursor: pointer; padding: 0; }
 .adm__panelscrim { position: fixed; inset: 0; z-index: 40; background: rgba(10,4,7,0.8); display: flex; align-items: flex-end; justify-content: center; }

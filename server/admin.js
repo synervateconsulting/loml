@@ -94,14 +94,25 @@ router.get('/overview', async (_req, res) => {
   const daily = [...byDay.entries()].map(([day, answers]) => ({ day, prompt: promptForDay(day), answers }));
 
   const points = (await query('SELECT COALESCE(SUM(points),0)::int AS n, count(*)::int AS rows FROM game_points')).rows[0];
-  const played = (await query('SELECT count(*)::int AS n FROM game_used')).rows[0];
+  const playedRows = (
+    await query(
+      `SELECT g.game_key AS key, u.display_name AS used_by, to_char(g.used_at, 'YYYY-MM-DD') AS used_at
+         FROM game_used g LEFT JOIN app_user u ON u.id = g.used_by
+        ORDER BY g.used_at DESC, g.game_key ASC`
+    )
+  ).rows;
 
   res.json({
     users: users.map((u) => ({ id: u.id, name: u.display_name })),
     shares,
     events,
     daily,
-    games: { points: points.n, pointRows: points.rows, playedKeys: played.n },
+    games: {
+      points: points.n,
+      pointRows: points.rows,
+      playedKeys: playedRows.length,
+      played: playedRows.map((r) => ({ key: r.key, usedBy: r.used_by, usedAt: r.used_at })),
+    },
   });
 });
 
@@ -343,10 +354,15 @@ router.delete('/event/:id', async (req, res) => {
 router.post('/games/reset', async (req, res) => {
   const clearPoints = Boolean(req.body?.points);
   const clearPlayed = Boolean(req.body?.played);
+  const keys = Array.isArray(req.body?.keys)
+    ? [...new Set(req.body.keys.map((k) => String(k || '')).filter(Boolean))].slice(0, 500)
+    : [];
   const out = {};
   if (clearPoints) out.points = (await query('DELETE FROM game_points')).rowCount;
   if (clearPlayed) out.played = (await query('DELETE FROM game_used')).rowCount;
-  await logAdmin('reset_games', null, out);
+  // Clear specific played tags (one or several) without touching the rest.
+  else if (keys.length) out.played = (await query('DELETE FROM game_used WHERE game_key = ANY($1::text[])', [keys])).rowCount;
+  await logAdmin('reset_games', null, { ...out, keys: keys.length ? keys : undefined });
   res.json({ ok: true, ...out });
 });
 
