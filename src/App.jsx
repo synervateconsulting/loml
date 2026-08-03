@@ -17,13 +17,16 @@ import { ShareModal, RespondModal, EditQuestionModal, ViewModal } from './compon
 
 const firstName = (name = '') => name.split(' ')[0];
 
+// [key, emoji, label] — emoji and label are separate so a waiting badge can be
+// overlaid on the emoji (absolutely positioned) without changing the tab's
+// width, which otherwise reflowed the whole grid when a dot appeared/vanished.
 const NAV = [
-  ['shares', '💞 Shares'],
-  ['keepsakes', '⭐️ Keepsakes'],
-  ['spicy', '🔥😈🔥'],
-  ['lists', '📋 Lists'],
-  ['rituals', '🌱 Rituals'],
-  ['games', '🕹️ Games'],
+  ['shares', '💞', 'Shares'],
+  ['keepsakes', '⭐️', 'Keepsakes'],
+  ['spicy', '🔥😈🔥', ''],
+  ['lists', '📋', 'Lists'],
+  ['rituals', '🌱', 'Rituals'],
+  ['games', '🕹️', 'Games'],
 ];
 
 export default function App() {
@@ -445,7 +448,7 @@ export default function App() {
         </div>
         <div className="actionbar">
           <nav className="navgrid" role="tablist">
-            {NAV.map(([key, label]) => {
+            {NAV.map(([key, emoji, label]) => {
               const dot = (key === 'shares' && waitingClean > 0) || (key === 'spicy' && waitingSpicy > 0);
               return (
                 <button
@@ -456,8 +459,11 @@ export default function App() {
                   className={`topnav__item ${view === key ? 'is-active' : ''}`}
                   onClick={() => setView(key)}
                 >
+                  <span className={`topnav__emoji ${label ? '' : 'topnav__emoji--solo'}`} aria-hidden="true">
+                    {emoji}
+                    {dot && <span className="topnav__dot" aria-label="waiting on you" />}
+                  </span>
                   {label}
-                  {dot && <span className="dot" aria-label="waiting on you" />}
                 </button>
               );
             })}

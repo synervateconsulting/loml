@@ -2123,7 +2123,27 @@ body::before {
   font-weight: 600;
 }
 .topnav__emoji {
+  position: relative;
   margin-right: 5px;
+}
+.topnav__emoji--solo {
+  margin-right: 0;
+}
+/* Waiting badge overlaid on the bottom of the tab's emoji. Absolutely
+   positioned so it never changes the tab width (which reflowed the grid). */
+.topnav__dot {
+  position: absolute;
+  right: -3px;
+  bottom: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--candle);
+  border: 1.5px solid var(--night);
+  box-sizing: content-box;
+}
+.topnav__item.is-active .topnav__dot {
+  border-color: var(--cream);
 }
 
 /* action bar: nav pills (wrap to 2 rows) on the left + square Share on right */
