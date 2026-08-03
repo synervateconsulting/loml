@@ -538,3 +538,19 @@ BEGIN
 END $$;
 ALTER TABLE attachment ADD CONSTRAINT attachment_owner_present CHECK (owner_id IS NOT NULL);
 CREATE INDEX IF NOT EXISTS attachment_owner_idx ON attachment (owner_kind, owner_id);
+
+-- Coupon book: redeemable favors one partner gives the other. Redeeming awards
+-- Knowing-You points (computed live in scoring.js). Soft-delete only.
+CREATE TABLE IF NOT EXISTS coupon (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  from_id      INTEGER NOT NULL REFERENCES app_user(id),
+  to_id        INTEGER NOT NULL REFERENCES app_user(id),
+  title        TEXT NOT NULL,
+  note         TEXT NOT NULL DEFAULT '',
+  icon         TEXT NOT NULL DEFAULT '🎟️',
+  status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'redeemed', 'revoked')),
+  redeemed_at  TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  is_removed   BOOLEAN NOT NULL DEFAULT false
+);
+CREATE INDEX IF NOT EXISTS coupon_people_idx ON coupon (from_id, to_id);

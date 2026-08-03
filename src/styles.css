@@ -2736,3 +2736,96 @@ body::before {
 .adm__crow { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
 .adm__danger { appearance: none; background: var(--danger); color: #2a0d0e; border: 0; border-radius: 999px; padding: 10px 16px; font-weight: 700; cursor: pointer; }
 .adm__danger:disabled { opacity: 0.4; cursor: default; }
+
+/* coupons ------------------------------------------------------------------ */
+.coupons__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.coupons__bar .decks__hint {
+  flex: 1;
+  margin: 0;
+}
+.coupon {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.coupon.is-spent {
+  opacity: 0.6;
+}
+.coupon__stub {
+  flex: none;
+  width: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  background: var(--card-lift);
+  border-right: 1px dashed var(--edge);
+}
+.coupon__body {
+  flex: 1;
+  min-width: 0;
+  padding: 11px 13px;
+}
+.coupon__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.coupon__note {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.coupon__meta {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.coupon__social {
+  margin-top: 8px;
+}
+.coupon__actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+}
+.couponpick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.couponpick__opt {
+  appearance: none;
+  border: 1px solid var(--edge);
+  background: var(--card);
+  color: var(--cream);
+  border-radius: 999px;
+  padding: 6px 11px;
+  font: 500 12.5px var(--body);
+  cursor: pointer;
+}
+.couponpick__opt.is-active {
+  background: var(--cream);
+  color: var(--night);
+  border-color: var(--cream);
+}
+.couponform {
+  display: flex;
+  gap: 8px;
+}
+.couponform__icon {
+  flex: 0 0 52px;
+  text-align: center;
+}
