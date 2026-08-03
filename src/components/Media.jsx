@@ -44,6 +44,10 @@ export function Attachments({ items = [], onRemove }) {
           <Player item={item} />
           <figcaption className="media__caption">
             <span>{item.file_name || item.media_kind}</span>
+            {kindOf(item) === 'video' &&
+              (item.transcode_status === 'pending' || item.transcode_status === 'none') && (
+                <span className="media__opt">Optimizing for all devices…</span>
+              )}
             {onRemove && (
               <button type="button" className="linkbtn linkbtn--danger" onClick={() => onRemove(item)}>
                 Remove

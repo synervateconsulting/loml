@@ -3,6 +3,8 @@
 // Postgres-BYTEA path, so this is inert until R2 is configured.
 
 import { randomUUID } from 'node:crypto';
+import { createReadStream, createWriteStream, statSync } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 import {
   S3Client,
   PutObjectCommand,
@@ -115,6 +117,27 @@ export async function completeMultipart(key, uploadId, parts) {
       Key: key,
       UploadId: uploadId,
       MultipartUpload: { Parts: parts },
+    })
+  );
+}
+
+// Stream an object down to a local file (transcoder input).
+export async function downloadTo(key, filePath) {
+  const out = await client().send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
+  await pipeline(out.Body, createWriteStream(filePath));
+}
+
+// Stream a local file up to R2 with a known length (transcoder output) — no
+// buffering the whole file in memory.
+export async function putStream(key, filePath, contentType) {
+  const size = statSync(filePath).size;
+  await client().send(
+    new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      Body: createReadStream(filePath),
+      ContentLength: size,
+      ContentType: contentType || 'application/octet-stream',
     })
   );
 }
