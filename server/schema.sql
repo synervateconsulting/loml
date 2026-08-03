@@ -44,6 +44,12 @@ ALTER TABLE question ADD COLUMN IF NOT EXISTS is_keepsake BOOLEAN NOT NULL DEFAU
 ALTER TABLE question ADD COLUMN IF NOT EXISTS seen_at TIMESTAMPTZ;                    -- recipient saw the share
 ALTER TABLE question ADD COLUMN IF NOT EXISTS seen_by INTEGER REFERENCES app_user(id);
 ALTER TABLE question ADD COLUMN IF NOT EXISTS is_spicy BOOLEAN NOT NULL DEFAULT false; -- lives only in the 🔥😈🔥 tab
+-- A share with attachments is created as a draft (hidden, no push) so its photo
+-- can upload first; "finalize" flips it live. Never shared without its photo.
+ALTER TABLE question ADD COLUMN IF NOT EXISTS is_draft BOOLEAN NOT NULL DEFAULT false;
+-- Sweep drafts abandoned mid-upload (never finalized) so they don't linger.
+UPDATE question SET is_removed = true
+  WHERE is_draft = true AND is_removed = false AND created_at < now() - INTERVAL '24 hours';
 
 -- One row per saved state of a question, including the original.
 CREATE TABLE IF NOT EXISTS question_version (

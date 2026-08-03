@@ -31,7 +31,8 @@ app.get('*', (_req, res) => res.sendFile(path.join(distDir, 'index.html')));
 app.use((err, _req, res, _next) => {
   console.error(err);
   if (err?.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).json({ error: 'That file is too large to upload.' });
+    const limit = Number(process.env.MAX_UPLOAD_MB || 60);
+    return res.status(413).json({ error: `That file is too large — the limit is ${limit} MB. Videos may need trimming.` });
   }
   res.status(500).json({ error: 'Something broke on our end. Try again.' });
 });
