@@ -93,51 +93,76 @@ export const api = {
   cancelDateRequest: (id) => request('POST', `/date-requests/${id}/cancel`),
   ackEventNotification: (id) => request('POST', `/calendar/notifications/${id}/ack`),
   // Upload one attachment. Oversized photos are downscaled first (capped
-  // compression), real upload progress is reported via onProgress(pct), and
-  // transient failures (dropped/weak connection, 5xx) are retried with backoff.
+  // compression); the file goes DIRECT to R2 via a presigned PUT when object
+  // storage is enabled (falling back to a legacy multipart POST otherwise).
+  // Real progress is reported via onProgress(pct); transient failures retry with
+  // backoff (large files once); `signal` cancels an in-flight upload.
   uploadAttachment: async ({ ownerKind, questionId, responseId, file, fileName, mimeType, durationSecs, onProgress, signal }) => {
     const toSend = await maybeCompressImage(file);
-    // Pin the Content-Type onto the multipart part. A recorded Blob's type can
-    // otherwise be dropped, and the server would receive a generic mime.
     const name = fileName || toSend.name || file.name || 'recording';
     const type = mimeType || toSend.type || file.type || '';
     const payload = type ? new File([toSend], name, { type }) : toSend;
 
-    const buildForm = () => {
-      const form = new FormData();
-      form.append('ownerKind', ownerKind);
-      if (questionId) form.append('questionId', questionId);
-      if (responseId) form.append('responseId', responseId);
-      if (durationSecs != null) form.append('durationSecs', String(durationSecs));
-      form.append('file', payload, name);
-      return form;
-    };
-
     // Big files (videos) aren't auto-retried — re-sending the whole thing on a
-    // flaky link just burns data; the user can retry manually. Small files retry
-    // through transient failures.
+    // flaky link just burns data; the user can retry manually.
     const LARGE = 15 * 1024 * 1024;
     const attempts = payload.size > LARGE ? 1 : 3;
-    for (let i = 0; ; i++) {
-      try {
-        return await xhrUpload(buildForm(), onProgress, signal);
-      } catch (err) {
-        if (err.cancelled) throw err; // user aborted — stop immediately
-        // Don't retry a definitive client error (too large, locked, etc.).
-        const retriable = !err.status || err.status >= 500;
-        if (!retriable || i >= attempts - 1) throw err;
-        onProgress?.(0);
-        await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
-      }
+
+    const pre = await request('POST', '/attachments/presign', {
+      ownerKind,
+      questionId,
+      responseId,
+      byteSize: payload.size,
+    });
+
+    // Legacy fallback: object storage not configured → multipart POST to us.
+    if (pre?.enabled === false) {
+      return withUploadRetry(attempts, onProgress, () => {
+        const form = new FormData();
+        form.append('ownerKind', ownerKind);
+        if (questionId) form.append('questionId', questionId);
+        if (responseId) form.append('responseId', responseId);
+        if (durationSecs != null) form.append('durationSecs', String(durationSecs));
+        form.append('file', payload, name);
+        return xhrSend({ method: 'POST', url: '/api/attachments', body: form, credentials: true, onProgress, signal, parse: true });
+      });
     }
+
+    // R2: PUT straight to the presigned URL, then record it server-side.
+    await withUploadRetry(attempts, onProgress, () =>
+      xhrSend({ method: 'PUT', url: pre.url, body: payload, credentials: false, onProgress, signal })
+    );
+    return request('POST', '/attachments/complete', {
+      ownerKind,
+      questionId,
+      responseId,
+      key: pre.key,
+      fileName: name,
+      mimeType: type,
+      durationSecs,
+    });
   },
 };
+
+async function withUploadRetry(attempts, onProgress, fn) {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err.cancelled) throw err; // user aborted — stop immediately
+      const retriable = !err.status || err.status >= 500; // not a definitive 4xx
+      if (!retriable || i >= attempts - 1) throw err;
+      onProgress?.(0);
+      await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
+    }
+  }
+}
 
 // XHR (not fetch) so we get upload progress events, which drive the visible
 // "Uploading…" indicator. Uses a STALL watchdog (fail only if no progress for a
 // while) rather than a total-time limit, so a slow-but-moving upload — the
 // normal case for a large video — is never cut off. `signal` aborts it (Cancel).
-function xhrUpload(form, onProgress, signal) {
+function xhrSend({ method, url, body, credentials, onProgress, signal, parse }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       const e = new Error('Upload cancelled.');
@@ -164,24 +189,32 @@ function xhrUpload(form, onProgress, signal) {
       signal?.removeEventListener('abort', onAbort);
     };
 
-    xhr.open('POST', '/api/attachments');
-    xhr.withCredentials = true;
+    xhr.open(method, url);
+    xhr.withCredentials = Boolean(credentials);
     xhr.upload.onprogress = (e) => {
       bump();
       if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
     };
     xhr.onload = () => {
       cleanup();
-      let data = null;
-      try {
-        data = JSON.parse(xhr.responseText);
-      } catch {
-        /* empty body is fine */
-      }
       if (xhr.status >= 200 && xhr.status < 300) {
         onProgress?.(100);
+        let data = null;
+        if (parse) {
+          try {
+            data = JSON.parse(xhr.responseText);
+          } catch {
+            /* empty body is fine */
+          }
+        }
         resolve(data);
       } else {
+        let data = null;
+        try {
+          data = JSON.parse(xhr.responseText);
+        } catch {
+          /* R2 errors are XML, not JSON */
+        }
         const err = new Error(data?.error || 'That file would not upload. Try again.');
         err.status = xhr.status;
         reject(err);
@@ -199,7 +232,7 @@ function xhrUpload(form, onProgress, signal) {
     };
     signal?.addEventListener('abort', onAbort, { once: true });
     bump(); // start the stall clock even before the first progress event
-    xhr.send(form);
+    xhr.send(body);
   });
 }
 

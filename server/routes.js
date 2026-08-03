@@ -5,6 +5,7 @@ import { startSession, endSession, requireUser, partnerOf } from './auth.js';
 import { publicKey, saveSubscription, notify } from './push.js';
 import { promptForDay, appToday } from './daily.js';
 import { pickPoints, guessPoints, revealPoints, maxPointsFor, SCORE_LEGEND, computeDailyScore, knowingTotal } from './scoring.js';
+import { r2Enabled, newOriginalKey, presignPut, presignGet, headObject } from './storage.js';
 
 // Copy for the push banners.
 const newShareTitle = (name, kind) =>
@@ -761,9 +762,81 @@ router.patch('/responses/:id', requireUser, async (req, res) => {
 });
 
 /* ------------------------------------------------------------ attachments */
-/* No UI yet in phase 1. These are live so adding audio/video later is a
-   front-end job only. */
 
+// Shared owner/permission check for attaching to a question or a response.
+async function attachTarget(userId, ownerKind, questionId, responseId) {
+  if (ownerKind === 'question') {
+    const { rows } = await query('SELECT * FROM question WHERE id = $1 AND is_removed = false', [questionId]);
+    const q = rows[0];
+    if (!q) return { status: 404, error: 'Not found.' };
+    if (q.asker_id !== userId) return { status: 403, error: 'This is not yours.' };
+    if (q.status === 'answered') return { status: 409, error: "This one's already resolved, so it's locked." };
+    return { ok: true };
+  }
+  if (ownerKind === 'response') {
+    const { rows } = await query('SELECT * FROM response WHERE id = $1 AND is_removed = false', [responseId]);
+    const r = rows[0];
+    if (!r) return { status: 404, error: 'Answer not found.' };
+    if (r.responder_id !== userId) return { status: 403, error: 'Only the person who answered can attach to it.' };
+    return { ok: true };
+  }
+  return { status: 400, error: 'ownerKind must be question or response.' };
+}
+
+// Direct-to-R2 upload, step 1: hand back a presigned PUT the browser uploads to.
+// If R2 isn't configured, the client falls back to the legacy multipart POST.
+router.post('/attachments/presign', requireUser, async (req, res) => {
+  if (!r2Enabled()) return res.json({ enabled: false });
+  const { ownerKind, questionId, responseId, byteSize } = req.body || {};
+  const t = await attachTarget(req.user.id, ownerKind, questionId, responseId);
+  if (t.error) return res.status(t.status).json({ error: t.error });
+  if (Number(byteSize) > MAX_UPLOAD_MB * 1024 * 1024)
+    return res.status(413).json({ error: `That file is too large — the limit is ${MAX_UPLOAD_MB} MB.` });
+  const key = newOriginalKey();
+  const url = await presignPut(key);
+  res.json({ enabled: true, key, url });
+});
+
+// Direct-to-R2 upload, step 2: verify the object landed, then record it.
+router.post('/attachments/complete', requireUser, async (req, res) => {
+  if (!r2Enabled()) return res.status(409).json({ error: 'Object storage is not enabled.' });
+  const { ownerKind, questionId, responseId, key, fileName, mimeType, durationSecs } = req.body || {};
+  const t = await attachTarget(req.user.id, ownerKind, questionId, responseId);
+  if (t.error) return res.status(t.status).json({ error: t.error });
+  if (typeof key !== 'string' || !key.startsWith('att/')) return res.status(400).json({ error: 'Bad key.' });
+  const head = await headObject(key);
+  if (!head) return res.status(400).json({ error: 'Upload did not finish. Try again.' });
+
+  const { mime, kind } = effectiveMedia({
+    mime_type: mimeType,
+    media_kind: mediaKindFor(mimeType),
+    file_name: fileName,
+  });
+  const { rows } = await query(
+    `INSERT INTO attachment
+       (owner_kind, question_id, response_id, uploaded_by, media_kind, mime_type,
+        file_name, byte_size, duration_secs, storage, storage_key)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'r2', $10)
+     RETURNING id, media_kind, mime_type, file_name, byte_size, duration_secs`,
+    [
+      ownerKind,
+      ownerKind === 'question' ? questionId : null,
+      ownerKind === 'response' ? responseId : null,
+      req.user.id,
+      kind,
+      mime || 'application/octet-stream',
+      fileName || null,
+      head.size,
+      durationSecs ? Number(durationSecs) : null,
+      key,
+    ]
+  );
+  await logActivity(req.user.id, 'added_attachment', 'attachment', rows[0].id);
+  res.status(201).json(rows[0]);
+});
+
+// Legacy path: multipart upload buffered through the server into Postgres bytea.
+// Used only when R2 isn't configured (the client falls back to this).
 router.post('/attachments', requireUser, upload.single('file'), async (req, res) => {
   const { ownerKind, questionId, responseId, durationSecs } = req.body || {};
   if (!req.file) return res.status(400).json({ error: 'No file received.' });
@@ -837,7 +910,16 @@ router.get('/attachments/:id', requireUser, async (req, res) => {
   if (a.asker_id !== req.user.id && a.recipient_id !== req.user.id)
     return res.status(403).json({ error: 'Not yours to open.' });
 
-  const bytes = a.bytes; // Buffer straight from bytea
+  // Stored in R2: auth is done, hand off to a short-lived presigned URL. R2
+  // serves the bytes and Range requests directly (streaming, seeking).
+  if (a.storage === 'r2' && a.storage_key) {
+    const { mime } = effectiveMedia(a);
+    const url = await presignGet(a.storage_key, { mime, fileName: a.file_name });
+    res.setHeader('Cache-Control', 'private, no-store'); // don't cache the redirect to an expiring URL
+    return res.redirect(302, url);
+  }
+
+  const bytes = a.bytes; // Buffer straight from bytea (legacy)
   const total = bytes.length;
 
   // Serve a real media type even if this row was stored with a generic one,
