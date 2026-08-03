@@ -655,16 +655,6 @@ function BingoView({ meId, partner, used, onChanged }) {
     onChanged?.(); // bingo lines feed the 🧠 meter
   };
 
-  const fromTemplate = async (t) => {
-    setError('');
-    try {
-      await api.createBingo({ title: t.name, size: t.size, squares: t.squares, usedKey: `bingo:${t.id}` });
-      await refresh();
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-
   const toggle = async (sq) => {
     // Optimistic flip so the grid feels instant; reconcile on the response.
     setBoards((bs) =>
@@ -718,7 +708,7 @@ function BingoView({ meId, partner, used, onChanged }) {
             {BINGO_TEMPLATES.map((t) => {
               const played = used.has(`bingo:${t.id}`);
               return (
-                <button key={t.id} type="button" className={`ttset ${played ? 'is-played' : ''}`} onClick={() => fromTemplate(t)}>
+                <button key={t.id} type="button" className={`ttset ${played ? 'is-played' : ''}`} onClick={() => setCompose(t)}>
                   <span className="ttset__icon" aria-hidden="true">{t.icon}</span>
                   <span className="ttset__text">
                     <span className="ttset__name">
@@ -743,6 +733,7 @@ function BingoView({ meId, partner, used, onChanged }) {
 
       {compose && (
         <BingoCompose
+          template={compose === true ? null : compose}
           onClose={() => setCompose(false)}
           onDone={async () => {
             setCompose(false);
@@ -764,10 +755,11 @@ function BingoView({ meId, partner, used, onChanged }) {
   );
 }
 
-function BingoCompose({ onClose, onDone }) {
-  const [title, setTitle] = useState('');
-  const [size, setSize] = useState(3);
-  const [text, setText] = useState('');
+function BingoCompose({ template, onClose, onDone }) {
+  // A template just prefills the fields — nothing is created until "Make it".
+  const [title, setTitle] = useState(template?.name || '');
+  const [size, setSize] = useState(template?.size || 3);
+  const [text, setText] = useState(template ? template.squares.join('\n') : '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [confirm, setConfirm] = useState(null);
@@ -785,7 +777,7 @@ function BingoCompose({ onClose, onDone }) {
         setBusy(true);
         setError('');
         try {
-          await api.createBingo({ title: title.trim(), size, squares: lines });
+          await api.createBingo({ title: title.trim(), size, squares: lines, usedKey: template ? `bingo:${template.id}` : undefined });
           await onDone();
         } catch (e) {
           setError(e.message);
@@ -799,7 +791,7 @@ function BingoCompose({ onClose, onDone }) {
       <Modal
         onScrimClick={cancel}
         eyebrow="🎉 Bingo"
-        title="New board"
+        title={template ? template.name : 'New board'}
         footer={
           <>
             <button type="button" className="btn btn--ghost" onClick={cancel}>
