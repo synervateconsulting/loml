@@ -388,8 +388,9 @@ export default function App() {
               className={`thinking ${tapped ? 'is-sent' : ''}`}
               onClick={thinkingOfYou}
               disabled={tapped}
+              title={tapped ? 'Sent 💛' : `Thinking of ${partner}`}
             >
-              {tapped ? 'Sent 💛' : `Thinking of ${partner}`}
+              {tapped ? '💛 Sent' : `💭 ${partner}`}
             </button>
             {pushSupported() && notif === 'granted' && (
               <button
@@ -402,8 +403,8 @@ export default function App() {
                 {resynced ? '✓' : '↺'}
               </button>
             )}
-            <button type="button" className="linkbtn" onClick={signOut}>
-              Sign out
+            <button type="button" className="iconbtn" onClick={signOut} title="Sign out" aria-label="Sign out">
+              👋
             </button>
           </div>
         </div>

@@ -109,20 +109,20 @@ body::before {
 
 .topbar__row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-  row-gap: 8px;
+  flex-wrap: nowrap;
+  gap: 8px;
   margin-bottom: 12px;
 }
 
 .brand {
   font-family: var(--display);
-  font-size: 23px;
+  font-size: 21px;
   font-weight: 600;
   letter-spacing: -0.01em;
   margin: 0;
+  flex: none;
 }
 
 .tabs {
@@ -974,20 +974,20 @@ body::before {
 /* Score badges next to the logo */
 .topbar__brand {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  flex: none;
 }
 .scorebadge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   border: 1px solid var(--edge);
   border-radius: 999px;
   background: var(--card);
   color: var(--muted);
-  padding: 4px 11px;
-  font-size: 12.5px;
+  padding: 4px 9px;
+  font-size: 12px;
   line-height: 1;
   cursor: pointer;
   white-space: nowrap;
@@ -2048,7 +2048,9 @@ body::before {
 .topbar__actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 7px;
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
 .iconbtn {
@@ -2082,10 +2084,13 @@ body::before {
   border-radius: 999px;
   color: var(--rose);
   font: 600 12px var(--body);
-  padding: 6px 12px;
+  padding: 6px 10px;
   cursor: pointer;
   transition: opacity 0.15s ease;
   white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .thinking.is-sent {
   color: var(--candle);
