@@ -18,11 +18,11 @@ const firstName = (name = '') => name.split(' ')[0];
 
 const NAV = [
   ['shares', '💞 Shares'],
-  ['rituals', '🌱 Rituals'],
   ['keepsakes', '⭐️ Keepsakes'],
   ['spicy', '🔥😈🔥'],
-  ['games', '🕹️ Games'],
   ['lists', '📋 Lists'],
+  ['rituals', '🌱 Rituals'],
+  ['games', '🕹️ Games'],
 ];
 
 export default function App() {
