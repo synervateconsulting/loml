@@ -65,6 +65,7 @@ export const api = {
   checkinHistory: () => request('GET', '/checkin/history'),
   bingo: () => request('GET', '/bingo'),
   createBingo: (fields) => request('POST', '/bingo', fields),
+  editBingo: (id, fields) => request('POST', `/bingo/${id}/edit`, fields),
   toggleBingoSquare: (id) => request('POST', `/bingo/squares/${id}/toggle`),
   removeBingo: (id) => request('POST', `/bingo/${id}/remove`),
   capsules: () => request('GET', '/capsules'),

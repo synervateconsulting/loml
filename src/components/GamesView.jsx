@@ -47,6 +47,7 @@ export default function GamesView({
   onStartWyr,
   onStartGuess,
   usedGames = [],
+  users = {},
   onChanged,
 }) {
   const [pane, setPane] = useState('decks');
@@ -232,7 +233,7 @@ export default function GamesView({
 
       {pane === 'coupons' && <CouponsView meId={meId} partner={partner} onChanged={onChanged} />}
 
-      {pane === 'bingo' && <BingoView meId={meId} partner={partner} used={used} onChanged={onChanged} />}
+      {pane === 'bingo' && <BingoView meId={meId} partner={partner} used={used} users={users} onChanged={onChanged} />}
     </div>
   );
 }
@@ -402,7 +403,13 @@ function winningCells(size, doneSet) {
   return win;
 }
 
-function BingoBoard({ board, meId, onToggle, onRemove, onChanged }) {
+// When a square was marked done — date · time, matching the Lists badge format.
+const fmtDoneWhen = (iso) => {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+};
+
+function BingoBoard({ board, meId, users = {}, onToggle, onEdit, onChanged }) {
   const doneSet = new Set(board.squares.filter((s) => s.doneAt).map((s) => s.position));
   const win = winningCells(board.size, doneSet);
   return (
@@ -410,25 +417,37 @@ function BingoBoard({ board, meId, onToggle, onRemove, onChanged }) {
       <div className="bingo__head">
         <p className="bingo__title">{board.title}</p>
         <div className="bingo__badges">
-          {board.awardedRow && <span className="bingo__badge">Bingo! +5</span>}
-          {board.awardedFull && <span className="bingo__badge bingo__badge--full">Full card +25</span>}
-          <button type="button" className="linkbtn linkbtn--danger" onClick={() => onRemove(board)}>
-            Remove
+          {board.lines > 0 && (
+            <span className="bingo__badge">
+              🎉 {board.lines} {board.lines === 1 ? 'line' : 'lines'} · +{board.lines * 5}
+            </span>
+          )}
+          {board.full && <span className="bingo__badge bingo__badge--full">Full card +25</span>}
+          <button type="button" className="linkbtn" onClick={() => onEdit(board)}>
+            Edit
           </button>
         </div>
       </div>
       <div className={`bingo__grid bingo__grid--${board.size}`}>
         {board.squares.map((s) => {
           const done = Boolean(s.doneAt);
+          // Marks from BOTH partners count together toward lines — the fill is the
+          // same for either person; only the corner badge shows who.
+          const u = done ? users[s.doneBy] : null;
+          const who = u?.name || (s.doneByName || '').trim() || 'someone';
           return (
             <button
               key={s.id}
               type="button"
               className={`bingo__cell ${done ? 'is-done' : ''} ${win.has(s.position) ? 'is-win' : ''}`}
               onClick={() => onToggle(s)}
+              title={done ? `Done by ${who} · ${fmtDoneWhen(s.doneAt)}` : undefined}
             >
               <span className="bingo__cellText">{s.text}</span>
-              {done && <span className="bingo__check" aria-hidden="true">✓</span>}
+              {done && u && (
+                <span className={`bingo__who listbadge listbadge--${u.color}`} aria-hidden="true">{u.initial}</span>
+              )}
+              {done && <span className="bingo__doneAt">{fmtDoneWhen(s.doneAt)}</span>}
             </button>
           );
         })}
@@ -450,9 +469,10 @@ function BingoBoard({ board, meId, onToggle, onRemove, onChanged }) {
   );
 }
 
-function BingoView({ meId, partner, used, onChanged }) {
+function BingoView({ meId, partner, used, users = {}, onChanged }) {
   const [boards, setBoards] = useState(null);
   const [compose, setCompose] = useState(false);
+  const [edit, setEdit] = useState(null);
   const [flash, setFlash] = useState('');
   const [confirm, setConfirm] = useState(null);
   const [error, setError] = useState('');
@@ -478,7 +498,8 @@ function BingoView({ meId, partner, used, onChanged }) {
     try {
       const res = await api.toggleBingoSquare(sq.id);
       if (res.newFull) setFlash('🎉 Full card! +25');
-      else if (res.newLine) setFlash('🎉 Bingo! +5');
+      else if (res.newLines > 0)
+        setFlash(res.newLines === 1 ? '🎉 Bingo! +5' : `🎉 ${res.newLines} lines! +${res.newLines * 5}`);
       await refresh();
     } catch (e) {
       setError(e.message);
@@ -513,43 +534,35 @@ function BingoView({ meId, partner, used, onChanged }) {
         </button>
       </div>
 
-      {boards.length === 0 && (
-        <>
-          <p className="games__sub">Start from a set</p>
-          <div className="ttsets">
-            {BINGO_TEMPLATES.map((t) => {
-              const played = used.has(`bingo:${t.id}`);
-              return (
-                <button key={t.id} type="button" className={`ttset ${played ? 'is-played' : ''}`} onClick={() => setCompose(t)}>
-                  <span className="ttset__icon" aria-hidden="true">{t.icon}</span>
-                  <span className="ttset__text">
-                    <span className="ttset__name">
-                      {t.name}
-                      {played && <span className="playedtag">Made</span>}
-                    </span>
-                    <span className="ttset__blurb">{t.size}×{t.size} board</span>
-                  </span>
-                  <span className="ttset__count">{t.size * t.size}</span>
-                </button>
-              );
-            })}
-          </div>
-        </>
-      )}
+      {boards.length === 0 && <p className="empty">No boards yet — start one from a preset or build your own.</p>}
 
       {error && <p className="notice notice--error">{error}</p>}
 
       {boards.map((b) => (
-        <BingoBoard key={b.id} board={b} meId={meId} onToggle={toggle} onRemove={remove} onChanged={refresh} />
+        <BingoBoard key={b.id} board={b} meId={meId} users={users} onToggle={toggle} onEdit={setEdit} onChanged={refresh} />
       ))}
 
       {compose && (
         <BingoCompose
-          template={compose === true ? null : compose}
+          used={used}
           onClose={() => setCompose(false)}
           onDone={async () => {
             setCompose(false);
             await refresh();
+          }}
+        />
+      )}
+      {edit && (
+        <BingoEdit
+          board={edit}
+          onClose={() => setEdit(null)}
+          onDone={async () => {
+            setEdit(null);
+            await refresh();
+          }}
+          onRemove={(board) => {
+            setEdit(null);
+            remove(board);
           }}
         />
       )}
@@ -567,11 +580,13 @@ function BingoView({ meId, partner, used, onChanged }) {
   );
 }
 
-function BingoCompose({ template, onClose, onDone }) {
-  // A template just prefills the fields — nothing is created until "Make it".
-  const [title, setTitle] = useState(template?.name || '');
-  const [size, setSize] = useState(template?.size || 3);
-  const [text, setText] = useState(template ? template.squares.join('\n') : '');
+function BingoCompose({ used, onClose, onDone }) {
+  // Pick a preset (fills every field) or build your own — nothing is created
+  // until "Make it". usedKey tracks the chosen preset so it earns its Made tag.
+  const [title, setTitle] = useState('');
+  const [size, setSize] = useState(3);
+  const [text, setText] = useState('');
+  const [usedKey, setUsedKey] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [confirm, setConfirm] = useState(null);
@@ -582,6 +597,13 @@ function BingoCompose({ template, onClose, onDone }) {
   const dirty = Boolean(title.trim() || text.trim());
   const cancel = () => (dirty ? setConfirm({ steps: discardSteps('board'), action: onClose }) : onClose());
 
+  const pickPreset = (t) => {
+    setTitle(t.name);
+    setSize(t.size);
+    setText(t.squares.join('\n'));
+    setUsedKey(`bingo:${t.id}`);
+  };
+
   const save = () =>
     setConfirm({
       steps: sendSteps('Make this board?', 'You’ll both see it and can tap squares as you go.'),
@@ -589,7 +611,7 @@ function BingoCompose({ template, onClose, onDone }) {
         setBusy(true);
         setError('');
         try {
-          await api.createBingo({ title: title.trim(), size, squares: lines, usedKey: template ? `bingo:${template.id}` : undefined });
+          await api.createBingo({ title: title.trim(), size, squares: lines, usedKey: usedKey || undefined });
           await onDone();
         } catch (e) {
           setError(e.message);
@@ -603,7 +625,7 @@ function BingoCompose({ template, onClose, onDone }) {
       <Modal
         onScrimClick={cancel}
         eyebrow="🎉 Bingo"
-        title={template ? template.name : 'New board'}
+        title="New board"
         footer={
           <>
             <button type="button" className="btn btn--ghost" onClick={cancel}>
@@ -615,6 +637,26 @@ function BingoCompose({ template, onClose, onDone }) {
           </>
         }
       >
+        <div className="field">
+          <span className="field__label">Start from a preset, or build your own</span>
+          <div className="couponpick">
+            {BINGO_TEMPLATES.map((t) => {
+              const key = `bingo:${t.id}`;
+              const made = used?.has(key);
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`couponpick__opt ${usedKey === key ? 'is-active' : ''}`}
+                  onClick={() => pickPreset(t)}
+                >
+                  <span aria-hidden="true">{t.icon}</span> {t.name} · {t.size}×{t.size}
+                  {made && <span className="playedtag">Made</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <label className="field">
           <span className="field__label">Board name</span>
           <input className="field__input" value={title} maxLength={120} placeholder="Summer together" onChange={(e) => setTitle(e.target.value)} />
@@ -643,6 +685,98 @@ function BingoCompose({ template, onClose, onDone }) {
         </label>
         {lines.length > need && <p className="hint">That’s {lines.length - need} too many — a {size}×{size} board needs exactly {need}.</p>}
         {error && <p className="notice notice--error">{error}</p>}
+      </Modal>
+      {confirm && (
+        <Confirm
+          steps={confirm.steps}
+          onResolve={(ok) => {
+            const { action } = confirm;
+            setConfirm(null);
+            if (ok) action();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+// Edit an existing board in place. Squares are prefilled per position; changing
+// a square that was marked done will uncomplete it (server-side), which we warn
+// about. Size is fixed here. Removing the board lives in the footer.
+function BingoEdit({ board, onClose, onDone, onRemove }) {
+  const [title, setTitle] = useState(board.title);
+  const [squares, setSquares] = useState(board.squares.map((s) => s.text)); // position order
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [confirm, setConfirm] = useState(null);
+
+  const setSquare = (i, v) => setSquares((arr) => arr.map((t, idx) => (idx === i ? v : t)));
+  const ready = Boolean(title.trim()) && squares.every((t) => t.trim());
+  const changedDone = board.squares.some((s, i) => s.doneAt && squares[i].trim() !== s.text);
+  const dirty = title.trim() !== board.title || board.squares.some((s, i) => squares[i].trim() !== s.text);
+  const cancel = () =>
+    dirty
+      ? setConfirm({ steps: [{ title: 'Discard changes?', body: 'Your edits won’t be saved.', confirm: 'Discard', tone: 'danger' }], action: onClose })
+      : onClose();
+
+  const save = () =>
+    setConfirm({
+      steps: sendSteps(
+        'Save changes?',
+        changedDone ? 'Squares you changed that were marked done will be uncompleted.' : 'The board updates for both of you.'
+      ),
+      action: async () => {
+        setBusy(true);
+        setError('');
+        try {
+          await api.editBingo(board.id, { title: title.trim(), squares: squares.map((t) => t.trim()) });
+          await onDone();
+        } catch (e) {
+          setError(e.message);
+          setBusy(false);
+        }
+      },
+    });
+
+  return (
+    <>
+      <Modal
+        onScrimClick={cancel}
+        eyebrow="🎉 Bingo"
+        title="Edit board"
+        footer={
+          <>
+            <button type="button" className="btn btn--ghost" onClick={cancel}>
+              Cancel
+            </button>
+            <button type="button" className="btn btn--primary" onClick={save} disabled={!ready || busy}>
+              Save changes
+            </button>
+          </>
+        }
+      >
+        <label className="field">
+          <span className="field__label">Board name</span>
+          <input className="field__input" value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} />
+        </label>
+        <p className="field__label">Squares · {board.size}×{board.size}</p>
+        <div className="bingoedit">
+          {squares.map((t, i) => (
+            <div key={board.squares[i].id} className="bingoedit__row">
+              <span className="bingoedit__num">{i + 1}</span>
+              <input className="field__input" value={t} maxLength={120} onChange={(e) => setSquare(i, e.target.value)} />
+              {board.squares[i].doneAt && (
+                <span className="bingoedit__done" title="Marked done — changing the wording will uncomplete it">✓</span>
+              )}
+            </div>
+          ))}
+        </div>
+        {changedDone && <p className="hint">Squares you changed that were marked done will be uncompleted.</p>}
+        {error && <p className="notice notice--error">{error}</p>}
+        <hr className="rule" />
+        <button type="button" className="linkbtn linkbtn--danger" onClick={() => onRemove(board)}>
+          Remove this board
+        </button>
       </Modal>
       {confirm && (
         <Confirm

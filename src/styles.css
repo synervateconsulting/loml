@@ -3125,24 +3125,70 @@ body::before {
 .bingo__grid--5 .bingo__cellText {
   font-size: 9.5px;
 }
+/* Done fill is identical for either partner — who is shown only by the badge. */
 .bingo__cell.is-done {
   background: rgba(232, 135, 155, 0.22);
   border-color: var(--rose);
+  padding: 14px 4px 13px; /* room for the corner badge + the who/when line */
 }
 .bingo__cell.is-win {
   background: rgba(240, 178, 107, 0.28);
   border-color: var(--candle);
 }
-.bingo__check {
+/* Lists-style initial badge, tucked in the corner of a completed square. */
+.bingo__who {
   position: absolute;
   top: 3px;
-  right: 5px;
-  font-size: 11px;
+  right: 3px;
+  width: 15px;
+  height: 15px;
+  font-size: 9px;
+}
+/* Date · time it was marked, along the bottom (full detail in the tooltip). */
+.bingo__doneAt {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 2px;
+  font-size: 8px;
+  line-height: 1;
   color: var(--candle);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+.bingo__grid--5 .bingo__doneAt {
+  font-size: 7px;
 }
 .bingo__social {
   border-top: 1px solid var(--edge);
   padding-top: 8px;
+}
+/* edit board: one input per square */
+.bingoedit {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.bingoedit__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bingoedit__num {
+  flex: none;
+  width: 20px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.bingoedit__done {
+  flex: none;
+  color: var(--candle);
+  font-size: 13px;
 }
 
 /* time capsules ------------------------------------------------------------ */
