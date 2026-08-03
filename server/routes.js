@@ -10,11 +10,16 @@ import {
   guessPoints,
   revealPoints,
   maxPointsFor,
-  SCORE_LEGEND,
+  GAME_LEGEND,
+  BOND_LEGEND,
   computeDailyScore,
+  computeGratitudeScore,
+  computeWeeklyScore,
+  computeShareScore,
   computeCouponScore,
   computeBingoScore,
-  knowingTotal,
+  gameTotal,
+  bondTotal,
 } from './scoring.js';
 import {
   r2Enabled,
@@ -1808,10 +1813,14 @@ router.get('/checkin/history', requireUser, async (req, res) => {
   res.json({ weeks });
 });
 
-// Played keys + the shared "Knowing You" points total.
+// Played keys + both couple-wide score totals (game 🧠 and bond ❤️).
 router.get('/games/used', requireUser, async (_req, res) => {
-  const [used, total] = await Promise.all([query('SELECT game_key FROM game_used'), knowingTotal()]);
-  res.json({ keys: used.rows.map((r) => r.game_key), knowingPoints: total });
+  const [used, game, bond] = await Promise.all([
+    query('SELECT game_key FROM game_used'),
+    gameTotal(),
+    bondTotal(),
+  ]);
+  res.json({ keys: used.rows.map((r) => r.game_key), gameScore: game, bondScore: bond });
 });
 
 // Mark templates as played. Used by the client's one-time reconciliation to tag
@@ -1838,10 +1847,10 @@ router.post('/games/used', requireUser, async (req, res) => {
   res.json({ ok: true, added });
 });
 
-// A breakdown of the "Knowing You" score: every game that actually earned
-// points (with how many and why), plus games still in flight that will score
-// once they're finished. This is what the brain-icon window reads so a person
-// can see exactly what the number is — and isn't — counting.
+// A breakdown of BOTH scores: the game score (🧠) — every game that earned
+// points, plus games still in flight — and the bond score (❤️) — shares and the
+// three rituals. This is what the score window reads so a person can see exactly
+// what each number is, and isn't, counting.
 router.get('/games/score', requireUser, async (_req, res) => {
   // Scored games: each game_points row, joined to its share for a title and,
   // for predict, the number of items (the most it could have scored).
@@ -1871,35 +1880,48 @@ router.get('/games/score', requireUser, async (_req, res) => {
   // scored only once both people have answered (status flips to 'answered'); a
   // guess is scored only once the author judges it; a deck scores once both
   // have answered it.
-  const [predictOpen, guessUnjudged, revealOpen, daily, coupons, bingo] = await Promise.all([
-    query(
-      "SELECT count(*)::int AS n FROM question WHERE kind = 'predict' AND is_removed = false AND status <> 'answered'"
-    ),
-    query(
-      `SELECT count(*)::int AS n FROM question q
-        WHERE q.kind = 'guess' AND q.is_removed = false AND q.guess_verdict IS NULL
-          AND EXISTS (SELECT 1 FROM reveal_answer ra WHERE ra.question_id = q.id AND ra.user_id = q.recipient_id)`
-    ),
-    query(
-      "SELECT count(*)::int AS n FROM question WHERE kind = 'reveal' AND is_removed = false AND status <> 'answered'"
-    ),
-    computeDailyScore(),
-    computeCouponScore(),
-    computeBingoScore(),
-  ]);
+  const [predictOpen, guessUnjudged, revealOpen, coupons, bingo, shares, daily, gratitude, weekly] =
+    await Promise.all([
+      query(
+        "SELECT count(*)::int AS n FROM question WHERE kind = 'predict' AND is_removed = false AND status <> 'answered'"
+      ),
+      query(
+        `SELECT count(*)::int AS n FROM question q
+          WHERE q.kind = 'guess' AND q.is_removed = false AND q.guess_verdict IS NULL
+            AND EXISTS (SELECT 1 FROM reveal_answer ra WHERE ra.question_id = q.id AND ra.user_id = q.recipient_id)`
+      ),
+      query(
+        "SELECT count(*)::int AS n FROM question WHERE kind = 'reveal' AND is_removed = false AND status <> 'answered'"
+      ),
+      computeCouponScore(),
+      computeBingoScore(),
+      computeShareScore(),
+      computeDailyScore(),
+      computeGratitudeScore(),
+      computeWeeklyScore(),
+    ]);
 
-  const gamesTotal = entries.reduce((sum, e) => sum + e.points, 0);
+  const gamesEntriesTotal = entries.reduce((sum, e) => sum + e.points, 0);
   res.json({
-    total: gamesTotal + daily.points + coupons.points + bingo.points,
-    entries,
-    daily,
-    coupons,
-    bingo,
-    legend: SCORE_LEGEND,
-    pending: {
-      predictAwaitingReveal: predictOpen.rows[0].n,
-      guessAwaitingVerdict: guessUnjudged.rows[0].n,
-      deckAwaitingReveal: revealOpen.rows[0].n,
+    game: {
+      total: gamesEntriesTotal + coupons.points + bingo.points,
+      entries,
+      coupons,
+      bingo,
+      legend: GAME_LEGEND,
+      pending: {
+        predictAwaitingReveal: predictOpen.rows[0].n,
+        guessAwaitingVerdict: guessUnjudged.rows[0].n,
+        deckAwaitingReveal: revealOpen.rows[0].n,
+      },
+    },
+    bond: {
+      total: shares.points + daily.points + gratitude.points + weekly.points,
+      shares,
+      daily,
+      gratitude,
+      weekly,
+      legend: BOND_LEGEND,
     },
   });
 });

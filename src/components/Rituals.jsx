@@ -16,21 +16,21 @@ const fmtDay = (s) => {
 // One compact strip for the daily question, gratitude and weekly check-in.
 // Each cell shows its state dot + a 🔥 streak, and opens that ritual on tap.
 export function RitualsBand({ daily, gratitude, checkin, onDaily, onGratitude, onWeekly }) {
-  const dailyState = !daily ? null : !daily.iAnswered ? ['todo', 'tap to answer'] : !daily.revealed ? ['wait', 'waiting'] : ['done', 'revealed'];
+  const dailyState = !daily ? null : !daily.iAnswered ? ['todo', 'answer'] : !daily.revealed ? ['wait', 'waiting'] : ['done', 'done'];
   const gratState = !gratitude ? null : gratitude.addedToday ? ['done', 'added'] : ['todo', 'add one'];
   const weekState = !checkin ? null : checkin.revealed ? ['done', 'done'] : checkin.iSubmitted ? ['wait', 'waiting'] : ['todo', 'your turn'];
 
   const cell = (emo, label, st, streak, onClick) => (
     <button type="button" className="rcell" onClick={onClick}>
-      <span className="rcell__emo" aria-hidden="true">{emo}</span>
-      <span className="rcell__label">{label}</span>
-      {st && (
-        <span className="rcell__state">
-          <span className={`dot dot--${st[0]}`} aria-hidden="true" />
-          {st[1]}
-        </span>
-      )}
-      <span className="rcell__streak">{streak > 0 ? `🔥 ${streak}` : ' '}</span>
+      <span className="rcell__top">
+        <span className="rcell__emo" aria-hidden="true">{emo}</span>
+        <span className="rcell__label">{label}</span>
+      </span>
+      <span className="rcell__bot">
+        {st && <span className={`dot dot--${st[0]}`} aria-hidden="true" />}
+        {st && <span className="rcell__status">{st[1]}</span>}
+        {streak > 0 && <span className="rcell__streak">🔥{streak}</span>}
+      </span>
     </button>
   );
 

@@ -8,6 +8,7 @@ import Login from './components/Login.jsx';
 import QuestionSection from './components/QuestionList.jsx';
 import ListsView from './components/ListsView.jsx';
 import GamesView from './components/GamesView.jsx';
+import ScoreBoard from './components/ScoreBoard.jsx';
 import CalendarView, { EventEditor } from './components/CalendarView.jsx';
 import Countdown from './components/Countdown.jsx';
 import { DailyModal } from './components/Daily.jsx';
@@ -32,7 +33,9 @@ export default function App() {
   const [couple, setCouple] = useState(null);
   const [calendar, setCalendar] = useState({ events: [], notifications: { needsAck: [], acknowledged: [] } });
   const [usedGames, setUsedGames] = useState([]);
-  const [knowingPoints, setKnowingPoints] = useState(0);
+  const [gameScore, setGameScore] = useState(0);
+  const [bondScore, setBondScore] = useState(0);
+  const [scoreOpen, setScoreOpen] = useState(false);
   const [daily, setDaily] = useState(null);
   const [gratitude, setGratitude] = useState(null);
   const [checkin, setCheckin] = useState(null);
@@ -64,7 +67,8 @@ export default function App() {
       setCouple(coupleState);
       setCalendar(cal);
       setUsedGames(used?.keys || []);
-      setKnowingPoints(used?.knowingPoints || 0);
+      setGameScore(used?.gameScore || 0);
+      setBondScore(used?.bondScore || 0);
       setDaily(dailyState);
       setGratitude(gratitudeState);
       setCheckin(checkinState);
@@ -247,7 +251,8 @@ export default function App() {
     setData({ asked: [], received: [] });
     setCalendar({ events: [], notifications: { needsAck: [], acknowledged: [] } });
     setUsedGames([]);
-    setKnowingPoints(0);
+    setGameScore(0);
+    setBondScore(0);
     setDaily(null);
     setGratitude(null);
     setCheckin(null);
@@ -363,7 +368,20 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <div className="topbar__row">
-          <h1 className="brand">loml</h1>
+          <div className="topbar__brand">
+            <h1 className="brand">loml</h1>
+            <button
+              type="button"
+              className="scorebadge"
+              onClick={() => setScoreOpen(true)}
+              title="See how your scores work"
+              aria-label={`Game score ${gameScore}, bond score ${bondScore} — open the score breakdown`}
+            >
+              <span className="scorebadge__val">{gameScore}</span> 🧠
+              <span className="scorebadge__sep" aria-hidden="true">|</span>
+              <span className="scorebadge__val">{bondScore}</span> ❤️
+            </button>
+          </div>
           <div className="topbar__actions">
             <button
               type="button"
@@ -552,11 +570,12 @@ export default function App() {
             onStartWyr={startWyr}
             onStartGuess={startGuess}
             usedGames={usedGames}
-            knowingPoints={knowingPoints}
             onChanged={load}
           />
         )}
       </main>
+
+      {scoreOpen && <ScoreBoard onClose={() => setScoreOpen(false)} />}
 
       {modal?.kind === 'share' && (
         <ShareModal

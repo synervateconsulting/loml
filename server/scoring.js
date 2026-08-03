@@ -1,11 +1,18 @@
-// The shared "Knowing You" score. Every game type — plus the daily question —
-// feeds one couple-wide number. Keeping the weights, their plain-language
-// legend, the boot-time backfill, and the daily-streak math all in this one
-// file means the write path (routes.js), the recompute, and the breakdown
-// window can never drift out of agreement.
+// The two couple-wide scores.
+//   - Game score (🧠): the playful, competitive-ish side — every scored game,
+//     plus coupons redeemed and bingo lines.
+//   - Bond score (❤️): the connection side — every regular share, plus the
+//     rituals (daily question, gratitude, weekly check-in) with a streak that
+//     compounds the longer you keep it up.
+// Keeping the weights, their plain-language legends, the boot-time backfill, and
+// all the streak math in this one file means the write path (routes.js), the
+// recompute, and the breakdown window can never drift out of agreement.
 
 import { query } from './db.js';
 import { appToday } from './daily.js';
+import { WEEKLY_KEYS, weekStart } from './rituals.js';
+
+/* ============================ GAME SCORE (🧠) ============================ */
 
 // Points per game.
 //   - This / That & WYR: a flat reward for playing it through together. Matching
@@ -30,13 +37,31 @@ export const COUPON_POINTS = 5;
 export const BINGO_ROW_POINTS = 5;
 export const BINGO_FULL_POINTS = 25;
 
-// Daily question: each day you BOTH answer is worth more than the last, so a
-// long streak compounds. Worth = base + (streakDay - 1) * step, capped.
+/* ============================ BOND SCORE (❤️) ============================ */
+
+// Every regular share (question / memory / note / song) is worth a flat amount.
+export const SHARE_POINTS = 2;
+export const SHARE_KINDS = ['question', 'memory', 'note', 'song'];
+
+// Rituals compound with their streak: worth = base + (streak - 1) * step, capped.
+// Weekly is weighted well above daily; gratitude is the lightest, everyday nudge.
 export const DAILY_BASE = 2;
 export const DAILY_STEP = 1;
 export const DAILY_CAP = 12;
 export const dailyDayPoints = (streakDay) =>
   Math.min(DAILY_CAP, DAILY_BASE + (Math.max(1, streakDay) - 1) * DAILY_STEP);
+
+export const GRAT_BASE = 1;
+export const GRAT_STEP = 1;
+export const GRAT_CAP = 8;
+export const gratDayPoints = (streakDay) =>
+  Math.min(GRAT_CAP, GRAT_BASE + (Math.max(1, streakDay) - 1) * GRAT_STEP);
+
+export const WEEK_BASE = 5;
+export const WEEK_STEP = 2;
+export const WEEK_CAP = 25;
+export const weekWeekPoints = (streakWeek) =>
+  Math.min(WEEK_CAP, WEEK_BASE + (Math.max(1, streakWeek) - 1) * WEEK_STEP);
 
 // Weighted points for a finished pick game. `matches` only matters for predict.
 export function pickPoints(kind, matches = 0) {
@@ -57,9 +82,9 @@ export const maxPointsFor = (kind, items = 0) => {
   return SCORE_WEIGHTS[kind]?.complete || 0;
 };
 
-// Plain-language explanation of each source, returned to the breakdown window so
-// the copy always matches the weights above.
-export const SCORE_LEGEND = [
+// Plain-language explanation of each source, per score, returned to the
+// breakdown window so the copy always matches the weights above.
+export const GAME_LEGEND = [
   {
     key: 'guess',
     label: 'Guess My Answer',
@@ -73,13 +98,27 @@ export const SCORE_LEGEND = [
   { key: 'this_that', label: 'This / That', detail: `+${SCORE_WEIGHTS.this_that.complete} for playing it through together` },
   { key: 'wyr', label: 'Would You Rather', detail: `+${SCORE_WEIGHTS.wyr.complete} for playing it through together` },
   { key: 'reveal', label: 'Decks', detail: `+${SCORE_WEIGHTS.reveal.complete} for answering a deck prompt together` },
+  { key: 'coupon', label: 'Coupons', detail: `+${COUPON_POINTS} for each coupon redeemed` },
+  { key: 'bingo', label: 'Bingo', detail: `+${BINGO_ROW_POINTS} for a line, +${BINGO_FULL_POINTS} for a full card` },
+];
+
+export const BOND_LEGEND = [
+  { key: 'share', label: 'Shares', detail: `+${SHARE_POINTS} for every question, memory, note or song you share` },
   {
     key: 'daily',
     label: 'Daily question',
     detail: `+${DAILY_BASE} and climbing each day you both answer — longer streak, more per day (up to +${DAILY_CAP})`,
   },
-  { key: 'coupon', label: 'Coupons', detail: `+${COUPON_POINTS} for each coupon redeemed` },
-  { key: 'bingo', label: 'Bingo', detail: `+${BINGO_ROW_POINTS} for a line, +${BINGO_FULL_POINTS} for a full card` },
+  {
+    key: 'gratitude',
+    label: 'Gratitude',
+    detail: `+${GRAT_BASE} and climbing each day an appreciation is added (up to +${GRAT_CAP})`,
+  },
+  {
+    key: 'weekly',
+    label: 'Weekly check-in',
+    detail: `+${WEEK_BASE} and climbing each week you both finish it — the heaviest ritual (up to +${WEEK_CAP})`,
+  },
 ];
 
 // Couple-wide coupon points: a flat amount per redeemed coupon.
@@ -145,15 +184,97 @@ export async function computeDailyScore() {
   return { points, completedDays: completed, currentStreak, longestStreak: longest };
 }
 
-// The grand total shown on the brain meter: all game points + daily points.
-export async function knowingTotal() {
-  const [gp, daily, coupons, bingo] = await Promise.all([
+// Bond: every regular (non-game) share is worth a flat amount.
+export async function computeShareScore() {
+  const { rows } = await query(
+    `SELECT count(*)::int AS n FROM question
+      WHERE kind = ANY($1) AND is_removed = false AND COALESCE(is_draft, false) = false`,
+    [SHARE_KINDS]
+  );
+  return { points: rows[0].n * SHARE_POINTS, count: rows[0].n };
+}
+
+// Bond: gratitude streak. A day counts if at least one appreciation was added;
+// consecutive such days compound. Live if the last day is today or yesterday.
+export async function computeGratitudeScore() {
+  const { rows } = await query(
+    `SELECT to_char(day, 'YYYY-MM-DD') AS day, count(*)::int AS n
+       FROM gratitude WHERE is_removed = false GROUP BY day ORDER BY day ASC`
+  );
+  let points = 0;
+  let streak = 0;
+  let longest = 0;
+  let days = 0;
+  let prev = null;
+  for (const r of rows) {
+    streak = prev && dayDiff(prev, r.day) === 1 ? streak + 1 : 1;
+    prev = r.day;
+    days += 1;
+    points += gratDayPoints(streak);
+    if (streak > longest) longest = streak;
+  }
+  let currentStreak = 0;
+  if (prev && dayDiff(prev, appToday()) <= 1) currentStreak = streak;
+  return { points, days, currentStreak, longestStreak: longest };
+}
+
+// Whole weeks apart, from two Sunday 'YYYY-MM-DD' week-start strings.
+const weekDiff = (a, b) => Math.round(dayDiff(a, b) / 7);
+
+// Bond: weekly check-in streak. A week counts once BOTH partners have finished
+// all prompts; consecutive completed weeks compound (weighted the heaviest).
+export async function computeWeeklyScore() {
+  const { rows } = await query(
+    `SELECT to_char(c.week_start, 'YYYY-MM-DD') AS ws,
+            (SELECT count(*) FROM (
+               SELECT a.user_id FROM checkin_answer a
+                WHERE a.checkin_id = c.id AND a.body <> ''
+                GROUP BY a.user_id HAVING count(*) >= $1
+             ) done)::int AS finishers
+       FROM checkin c ORDER BY c.week_start ASC`,
+    [WEEKLY_KEYS.length]
+  );
+  let points = 0;
+  let streak = 0;
+  let longest = 0;
+  let weeks = 0;
+  let prev = null;
+  for (const r of rows) {
+    if (r.finishers < 2) {
+      streak = 0;
+      prev = null;
+      continue; // only a week you both finished maintains the streak
+    }
+    streak = prev && weekDiff(prev, r.ws) === 1 ? streak + 1 : 1;
+    prev = r.ws;
+    weeks += 1;
+    points += weekWeekPoints(streak);
+    if (streak > longest) longest = streak;
+  }
+  let currentStreak = 0;
+  if (prev && weekDiff(prev, weekStart(appToday())) <= 1) currentStreak = streak;
+  return { points, weeks, currentStreak, longestStreak: longest };
+}
+
+// Game score (🧠): scored games + coupons redeemed + bingo lines.
+export async function gameTotal() {
+  const [gp, coupons, bingo] = await Promise.all([
     query('SELECT COALESCE(SUM(points), 0)::int AS total FROM game_points'),
-    computeDailyScore(),
     computeCouponScore(),
     computeBingoScore(),
   ]);
-  return gp.rows[0].total + daily.points + coupons.points + bingo.points;
+  return gp.rows[0].total + coupons.points + bingo.points;
+}
+
+// Bond score (❤️): regular shares + all three rituals.
+export async function bondTotal() {
+  const [shares, daily, gratitude, weekly] = await Promise.all([
+    computeShareScore(),
+    computeDailyScore(),
+    computeGratitudeScore(),
+    computeWeeklyScore(),
+  ]);
+  return shares.points + daily.points + gratitude.points + weekly.points;
 }
 
 // Recompute every game's points from the current weights on boot. This is what
