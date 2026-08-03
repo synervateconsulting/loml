@@ -477,3 +477,64 @@ BEGIN
      WHERE id = 1;
   END IF;
 END $$;
+
+/* ============================================================================
+   Groundwork: one generic comment table, universal reactions, polymorphic
+   attachment ownership. Migrations are idempotent (copy, reuse ids) and leave
+   the legacy tables/columns intact as a backup — a later cleanup drops them.
+   ========================================================================== */
+
+-- One comment table for every commentable thing. target_id is TEXT so it holds
+-- UUIDs (shares/lists/events) and the daily question's day string alike.
+CREATE TABLE IF NOT EXISTS comment (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  target_type  TEXT NOT NULL,   -- 'question' | 'daily' | 'list' | 'event' | (future)
+  target_id    TEXT NOT NULL,
+  user_id      INTEGER NOT NULL REFERENCES app_user(id),
+  body         TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  edited_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS comment_target_idx ON comment (target_type, target_id);
+
+-- Copy the four legacy comment tables in (reusing ids → safe to re-run).
+INSERT INTO comment (id, target_type, target_id, user_id, body, created_at, edited_at)
+  SELECT id, 'question', question_id::text, user_id, body, created_at, edited_at FROM question_comment
+  ON CONFLICT (id) DO NOTHING;
+INSERT INTO comment (id, target_type, target_id, user_id, body, created_at, edited_at)
+  SELECT id, 'daily', to_char(day, 'YYYY-MM-DD'), user_id, body, created_at, edited_at FROM daily_comment
+  ON CONFLICT (id) DO NOTHING;
+INSERT INTO comment (id, target_type, target_id, user_id, body, created_at, edited_at)
+  SELECT id, 'list', list_id::text, user_id, body, created_at, edited_at FROM list_comment
+  ON CONFLICT (id) DO NOTHING;
+INSERT INTO comment (id, target_type, target_id, user_id, body, created_at, edited_at)
+  SELECT id, 'event', event_id::text, user_id, body, created_at, edited_at FROM event_comment
+  ON CONFLICT (id) DO NOTHING;
+
+-- Reactions become universal: target_id widens to TEXT so day-keyed daily
+-- reactions live in the same table, and the kind check is permissive.
+ALTER TABLE reaction ALTER COLUMN target_id TYPE TEXT;
+ALTER TABLE reaction DROP CONSTRAINT IF EXISTS reaction_target_kind_check;
+ALTER TABLE reaction
+  ADD CONSTRAINT reaction_target_kind_check
+  CHECK (target_kind IN ('question', 'response', 'reveal', 'event', 'thisthat', 'list', 'daily'));
+-- Fold daily_reaction into the reaction table (day as the text target_id).
+INSERT INTO reaction (user_id, target_kind, target_id, emoji, created_at)
+  SELECT user_id, 'daily', to_char(day, 'YYYY-MM-DD'), emoji, created_at FROM daily_reaction
+  ON CONFLICT (user_id, target_kind, target_id) DO NOTHING;
+
+-- Attachments get a polymorphic owner so capsules/albums/etc. can own files.
+-- Legacy question_id/response_id stay populated as a backup.
+ALTER TABLE attachment ADD COLUMN IF NOT EXISTS owner_id UUID;
+UPDATE attachment SET owner_id = COALESCE(question_id, response_id) WHERE owner_id IS NULL;
+-- Drop the rigid legacy checks (owner_kind IN (...) and the question/response
+-- exclusivity) and require an owner_id instead. owner_kind is app-validated.
+DO $$
+DECLARE c text;
+BEGIN
+  FOR c IN SELECT conname FROM pg_constraint WHERE conrelid = 'attachment'::regclass AND contype = 'c' LOOP
+    EXECUTE 'ALTER TABLE attachment DROP CONSTRAINT ' || quote_ident(c);
+  END LOOP;
+END $$;
+ALTER TABLE attachment ADD CONSTRAINT attachment_owner_present CHECK (owner_id IS NOT NULL);
+CREATE INDEX IF NOT EXISTS attachment_owner_idx ON attachment (owner_kind, owner_id);

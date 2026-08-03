@@ -790,7 +790,7 @@ function RevealView({ question, meId, onClose, onRefresh }) {
             comments={question.comments || []}
             meId={meId}
             onSubmit={async (body) => {
-              const c = await api.commentShare(question.id, body);
+              const c = await api.comment('question', question.id, body);
               onRefresh?.();
               return c;
             }}
@@ -1021,7 +1021,7 @@ export function ViewModal({ question, canEditAnswer, meId, onClose, onDone, onRe
               comments={question.comments || []}
               meId={meId}
               onSubmit={async (body) => {
-                const c = await api.commentShare(question.id, body);
+                const c = await api.comment('question', question.id, body);
                 onRefresh?.();
                 return c;
               }}

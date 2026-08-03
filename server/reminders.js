@@ -1,9 +1,16 @@
-// Nudges for the daily question. At noon, 5pm and 10pm (in APP_TZ) we push a
-// reminder to anyone who hasn't answered today's question yet. The app badge
-// rides along automatically (notify() sets it, and an unanswered daily counts).
+// A tiny in-process scheduler. Any time-triggered job (daily reminders now;
+// capsule unlocks / weekly check-ins / monthly recaps later) registers a tick
+// handler here and the single 30s poll drives them all. Jobs get {hour, minute,
+// today} and are responsible for their own "fire once per slot" bookkeeping.
 import { query } from './db.js';
 import { notify } from './push.js';
 import { promptForDay, appToday, appClock, APP_TZ } from './daily.js';
+
+const tasks = [];
+// Register a scheduled task: fn({ hour, minute, today }) → runs every poll.
+export function registerScheduledTask(fn) {
+  tasks.push(fn);
+}
 
 const REMINDER_HOURS = [12, 17, 22];
 let lastFiredKey = null;
@@ -22,17 +29,32 @@ export async function sendDailyReminders() {
   return notified;
 }
 
-function tick() {
-  const { hour, minute } = appClock();
+// The daily-question reminder, as a registered task.
+function dailyReminderTask({ hour, minute, today }) {
   if (minute !== 0 || !REMINDER_HOURS.includes(hour)) return;
-  const key = `${appToday()}:${hour}`;
+  const key = `${today}:${hour}`;
   if (key === lastFiredKey) return; // fire once per reminder slot
   lastFiredKey = key;
   sendDailyReminders().catch((e) => console.error('daily reminder error:', e?.message));
 }
+registerScheduledTask(dailyReminderTask);
 
-export function startDailyReminders() {
-  // Poll every 30s so we reliably catch each reminder minute regardless of boot time.
-  setInterval(tick, 30 * 1000);
-  console.log(`Daily reminders: ${REMINDER_HOURS.map((h) => `${h}:00`).join(', ')} (${APP_TZ}).`);
+function tick() {
+  const { hour, minute } = appClock();
+  const ctx = { hour, minute, today: appToday() };
+  for (const task of tasks) {
+    try {
+      task(ctx);
+    } catch (e) {
+      console.error('scheduled task error:', e?.message);
+    }
+  }
 }
+
+// Kept the name so index.js is unchanged; it now starts the whole scheduler.
+export function startDailyReminders() {
+  // Poll every 30s so we reliably catch each scheduled minute regardless of boot time.
+  setInterval(tick, 30 * 1000);
+  console.log(`Scheduler running (daily reminders ${REMINDER_HOURS.map((h) => `${h}:00`).join(', ')} ${APP_TZ}).`);
+}
+export { startDailyReminders as startScheduler };

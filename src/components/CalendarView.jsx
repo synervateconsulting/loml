@@ -228,7 +228,7 @@ function EventViewer({ event, meId, partner, isCountdown, onEdit, onClose, onCha
     if (!body) return;
     setBusy(true);
     try {
-      await api.commentEvent(event.id, body);
+      await api.comment('event', event.id, body);
       setText('');
       await onChanged();
     } finally {
@@ -251,7 +251,7 @@ function EventViewer({ event, meId, partner, isCountdown, onEdit, onClose, onCha
         if (!body) return;
         setBusy(true);
         try {
-          await api.editEventComment(c.id, body);
+          await api.editComment(c.id, body);
           cancelEdit();
           await onChanged();
         } finally {
