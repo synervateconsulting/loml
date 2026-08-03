@@ -2153,11 +2153,15 @@ body::before {
   align-items: stretch;
   margin-top: 8px;
 }
+/* Fixed 3-across, 2-row layout (Shares/Keepsakes/Spicy · Lists/Rituals/Games).
+   A grid — not wrapping flex — so the arrangement can never reflow to 2 or 4 per
+   row as labels or badges change. Columns are content-sized (min max-content) yet
+   share leftover space (1fr), so wider labels like "Keepsakes" never truncate. */
 .navgrid {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(max-content, 1fr));
   gap: 6px;
   align-content: center;
 }
@@ -2959,9 +2963,18 @@ body::before {
   border-radius: 50%;
   flex: none;
 }
-.dot--todo { background: var(--rose); }
+/* An unanswered ritual pulses a rose halo to draw the eye. */
+.dot--todo {
+  background: var(--rose);
+  animation: dotpulse 1.6s ease-out infinite;
+}
 .dot--wait { background: var(--candle); }
 .dot--done { background: #9bcf7e; }
+@keyframes dotpulse {
+  0% { box-shadow: 0 0 0 0 rgba(232, 135, 155, 0.5); }
+  70% { box-shadow: 0 0 0 5px rgba(232, 135, 155, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(232, 135, 155, 0); }
+}
 
 /* gratitude ---------------------------------------------------------------- */
 .gratitude__compose {
