@@ -2829,3 +2829,117 @@ body::before {
   flex: 0 0 52px;
   text-align: center;
 }
+
+/* rituals band (home) ------------------------------------------------------ */
+.rband {
+  display: flex;
+  gap: 6px;
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  padding: 8px;
+  margin-bottom: 12px;
+}
+.rcell {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 4px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--cream);
+  cursor: pointer;
+  text-align: center;
+}
+.rcell:hover {
+  background: var(--card-lift);
+}
+.rcell__emo {
+  font-size: 19px;
+  line-height: 1;
+}
+.rcell__label {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.rcell__state {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.rcell__streak {
+  font-size: 10px;
+  color: var(--candle);
+  min-height: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.rcell__sep {
+  width: 1px;
+  align-self: stretch;
+  background: var(--edge);
+  margin: 6px 0;
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+.dot--todo { background: var(--rose); }
+.dot--wait { background: var(--candle); }
+.dot--done { background: #9bcf7e; }
+
+/* gratitude ---------------------------------------------------------------- */
+.gratitude__compose {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.gratitude__compose .field__input {
+  flex: 1;
+}
+.gcard {
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 11px 13px;
+  margin-bottom: 8px;
+}
+.gcard__body {
+  margin: 0;
+  font-size: 14.5px;
+  overflow-wrap: anywhere;
+}
+.gcard__meta {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* weekly check-in ---------------------------------------------------------- */
+.checkin__past {
+  border-top: 1px solid var(--edge);
+  padding-top: 8px;
+  margin-top: 8px;
+}
+.checkin__pastweek {
+  margin: 0 0 4px;
+  font: 600 12px var(--body);
+  color: var(--candle);
+}
+.checkin__pastline {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.checkin__pastline b {
+  color: var(--cream);
+  font-weight: 600;
+}

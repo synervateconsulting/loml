@@ -10,13 +10,15 @@ import ListsView from './components/ListsView.jsx';
 import GamesView from './components/GamesView.jsx';
 import CalendarView, { EventEditor } from './components/CalendarView.jsx';
 import Countdown from './components/Countdown.jsx';
-import { DailyCard, DailyModal } from './components/Daily.jsx';
+import { DailyModal } from './components/Daily.jsx';
+import RitualsView, { RitualsBand, GratitudeModal, CheckinModal } from './components/Rituals.jsx';
 import { ShareModal, RespondModal, EditQuestionModal, ViewModal } from './components/Modals.jsx';
 
 const firstName = (name = '') => name.split(' ')[0];
 
 const NAV = [
   ['shares', '💞 Shares'],
+  ['rituals', '🌱 Rituals'],
   ['keepsakes', '⭐️ Keepsakes'],
   ['spicy', '🔥😈🔥'],
   ['games', '🕹️ Games'],
@@ -32,6 +34,8 @@ export default function App() {
   const [usedGames, setUsedGames] = useState([]);
   const [knowingPoints, setKnowingPoints] = useState(0);
   const [daily, setDaily] = useState(null);
+  const [gratitude, setGratitude] = useState(null);
+  const [checkin, setCheckin] = useState(null);
   const [tab, setTab] = useState('theirs');
   const [view, setView] = useState('shares');
   const [modal, setModal] = useState(null);
@@ -47,12 +51,14 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      const [questions, coupleState, cal, used, dailyState] = await Promise.all([
+      const [questions, coupleState, cal, used, dailyState, gratitudeState, checkinState] = await Promise.all([
         api.questions(),
         api.couple(),
         api.calendar(),
         api.gamesUsed(),
         api.daily(),
+        api.gratitude(),
+        api.checkin(),
       ]);
       setData(questions);
       setCouple(coupleState);
@@ -60,6 +66,8 @@ export default function App() {
       setUsedGames(used?.keys || []);
       setKnowingPoints(used?.knowingPoints || 0);
       setDaily(dailyState);
+      setGratitude(gratitudeState);
+      setCheckin(checkinState);
       setError('');
     } catch (err) {
       setError(err.message);
@@ -241,6 +249,8 @@ export default function App() {
     setUsedGames([]);
     setKnowingPoints(0);
     setDaily(null);
+    setGratitude(null);
+    setCheckin(null);
     setView('shares');
   };
 
@@ -379,7 +389,14 @@ export default function App() {
             </button>
           </div>
         </div>
-        <DailyCard daily={daily} onOpen={() => setModal({ kind: 'daily' })} />
+        <RitualsBand
+          daily={daily}
+          gratitude={gratitude}
+          checkin={checkin}
+          onDaily={() => setModal({ kind: 'daily' })}
+          onGratitude={() => setModal({ kind: 'gratitude' })}
+          onWeekly={() => setModal({ kind: 'checkin' })}
+        />
         <div className="countdownrow">
           {couple?.countdown ? (
             <Countdown
@@ -523,6 +540,8 @@ export default function App() {
 
         {view === 'lists' && <ListsView meId={me.id} users={listUsers} />}
 
+        {view === 'rituals' && <RitualsView meId={me.id} />}
+
         {view === 'games' && (
           <GamesView
             meId={me.id}
@@ -582,6 +601,8 @@ export default function App() {
         />
       )}
       {modal?.kind === 'daily' && <DailyModal daily={daily} meId={me.id} onClose={close} onAnswered={finish} onRefresh={load} />}
+      {modal?.kind === 'gratitude' && <GratitudeModal meId={me.id} onClose={close} onChanged={load} />}
+      {modal?.kind === 'checkin' && <CheckinModal meId={me.id} onClose={close} onChanged={load} />}
     </div>
   );
 }
