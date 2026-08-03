@@ -183,10 +183,11 @@ const QUESTION_SELECT = `
 async function attachmentsFor(questionIds, responseIds) {
   if (!questionIds.length && !responseIds.length) return [];
   const { rows } = await query(
-    `SELECT id, owner_kind, question_id, response_id, media_kind, mime_type,
+    `SELECT id, owner_kind, owner_id, media_kind, mime_type,
             file_name, byte_size, duration_secs, is_removed, created_at, transcode_status
        FROM attachment
-      WHERE (question_id = ANY($1::uuid[]) OR response_id = ANY($2::uuid[]))
+      WHERE (owner_kind = 'question' AND owner_id = ANY($1::uuid[]))
+         OR (owner_kind = 'response' AND owner_id = ANY($2::uuid[]))
       ORDER BY created_at`,
     [questionIds, responseIds]
   );
@@ -203,11 +204,9 @@ async function reactionsFor(questionIds, responseIds) {
   if (!questionIds.length && !responseIds.length) return [];
   const { rows } = await query(
     `SELECT user_id, target_kind, target_id, emoji FROM reaction
-      WHERE (target_kind = 'question' AND target_id = ANY($1::uuid[]))
-         OR (target_kind = 'reveal'   AND target_id = ANY($1::uuid[]))
-         OR (target_kind = 'thisthat' AND target_id = ANY($1::uuid[]))
-         OR (target_kind = 'response' AND target_id = ANY($2::uuid[]))`,
-    [questionIds, responseIds]
+      WHERE (target_kind IN ('question', 'reveal', 'thisthat') AND target_id = ANY($1::text[]))
+         OR (target_kind = 'response' AND target_id = ANY($2::text[]))`,
+    [questionIds.map(String), responseIds.map(String)]
   );
   return rows;
 }
@@ -257,50 +256,51 @@ async function keepersFor(questionIds) {
   return rows;
 }
 
-async function commentsFor(questionIds) {
-  if (!questionIds.length) return [];
+// Generic comments (one table for every commentable thing). Load comments for a
+// set of targets of one type; `ids` are strings (UUIDs or the daily day-string).
+async function commentsForTargets(targetType, ids) {
+  if (!ids.length) return [];
   const { rows } = await query(
-    `SELECT c.id, c.question_id, c.user_id, c.body, c.created_at, c.edited_at, u.display_name
-       FROM question_comment c JOIN app_user u ON u.id = c.user_id
-      WHERE c.question_id = ANY($1::uuid[]) ORDER BY c.created_at ASC`,
-    [questionIds]
+    `SELECT c.id, c.target_id, c.user_id, c.body, c.created_at, c.edited_at, u.display_name
+       FROM comment c JOIN app_user u ON u.id = c.user_id
+      WHERE c.target_type = $1 AND c.target_id = ANY($2::text[]) ORDER BY c.created_at ASC`,
+    [targetType, ids.map(String)]
   );
   return rows;
 }
 
-const commentsOn = (comments, id) =>
-  (comments || [])
-    .filter((c) => c.question_id === id)
-    .map((c) => ({ id: c.id, userId: c.user_id, userName: c.display_name, body: c.body, createdAt: c.created_at, editedAt: c.edited_at }));
+const shapeComment = (c) => ({
+  id: c.id,
+  userId: c.user_id,
+  userName: c.display_name,
+  body: c.body,
+  createdAt: c.created_at,
+  editedAt: c.edited_at,
+});
 
-// Edit a comment in place. Author-only. `table` comes from our own code (never
-// user input), so it's safe to interpolate. Returns the new edited_at.
-async function editCommentRow(table, id, userId, body) {
-  const cur = await query(`SELECT user_id FROM ${table} WHERE id = $1`, [id]);
-  if (!cur.rows[0]) return { status: 404, error: 'Not found.' };
-  if (cur.rows[0].user_id !== userId) return { status: 403, error: 'You can only edit your own comment.' };
-  const upd = await query(`UPDATE ${table} SET body = $1, edited_at = now() WHERE id = $2 RETURNING edited_at`, [
-    body,
-    id,
-  ]);
-  return { status: 200, editedAt: upd.rows[0].edited_at };
-}
-
-async function handleCommentEdit(table, req, res) {
-  const body = (req.body?.body || '').trim().slice(0, 500);
-  if (!body) return res.status(400).json({ error: 'Write a comment.' });
-  const r = await editCommentRow(table, req.params.id, req.user.id, body);
-  if (r.error) return res.status(r.status).json({ error: r.error });
-  res.json({ id: req.params.id, body, editedAt: r.editedAt });
-}
+// Comments filtered from a preloaded set to one target id.
+const commentsOn = (comments, targetId) =>
+  (comments || []).filter((c) => c.target_id === String(targetId)).map(shapeComment);
 
 const reactionsOn = (reactions, kind, id) =>
-  reactions.filter((x) => x.target_kind === kind && x.target_id === id).map((x) => ({ userId: x.user_id, emoji: x.emoji }));
+  reactions
+    .filter((x) => x.target_kind === kind && x.target_id === String(id))
+    .map((x) => ({ userId: x.user_id, emoji: x.emoji }));
+
+// Load reactions for a set of same-kind targets (ids as strings).
+async function reactionsForTargets(targetKind, ids) {
+  if (!ids.length) return [];
+  const { rows } = await query(
+    'SELECT user_id, target_id, emoji FROM reaction WHERE target_kind = $1 AND target_id = ANY($2::text[])',
+    [targetKind, ids.map(String)]
+  );
+  return rows;
+}
 
 function shapeQuestion(row, ctx) {
   const { attachments, reactions, revealAnswers, thisThatItems, thisThatAnswers, keepers, viewerId, partnerId } = ctx;
-  const qAtt = attachments.filter((a) => a.question_id === row.id);
-  const rAtt = attachments.filter((a) => row.response_id && a.response_id === row.response_id);
+  const qAtt = attachments.filter((a) => a.owner_kind === 'question' && a.owner_id === row.id);
+  const rAtt = attachments.filter((a) => row.response_id && a.owner_kind === 'response' && a.owner_id === row.response_id);
 
   // Pick games (this_that / predict / wyr): a set of binary items, blind until
   // both answer every item. For 'predict' the recipient's answers are guesses
@@ -459,7 +459,7 @@ router.get('/questions', requireUser, async (req, res) => {
     thisThatAnswersFor(ttIds),
     pointsFor(scoredIds),
     keepersFor(qIds),
-    commentsFor(qIds), // comments can live on any finished share, not just games
+    commentsForTargets('question', qIds), // comments can live on any finished share
     partnerOf(req.user.id),
   ]);
   const ctx = { attachments, reactions, revealAnswers, thisThatItems, thisThatAnswers, pointsByQ, keepers, comments, viewerId: req.user.id, partnerId: partner?.id };
@@ -815,14 +815,16 @@ async function recordR2Attachment(userId, { ownerKind, questionId, responseId, k
     media_kind: mediaKindFor(mimeType),
     file_name: fileName,
   });
+  const ownerId = ownerKind === 'question' ? questionId : responseId;
   const { rows } = await query(
     `INSERT INTO attachment
-       (owner_kind, question_id, response_id, uploaded_by, media_kind, mime_type,
+       (owner_kind, owner_id, question_id, response_id, uploaded_by, media_kind, mime_type,
         file_name, byte_size, duration_secs, storage, storage_key)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'r2', $10)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'r2', $11)
      RETURNING id, media_kind, mime_type, file_name, byte_size, duration_secs`,
     [
       ownerKind,
+      ownerId,
       ownerKind === 'question' ? questionId : null,
       ownerKind === 'response' ? responseId : null,
       userId,
@@ -957,14 +959,16 @@ router.post('/attachments', requireUser, upload.single('file'), async (req, res)
     file_name: req.file.originalname,
   });
 
+  const ownerId = ownerKind === 'question' ? questionId : responseId;
   const { rows } = await query(
     `INSERT INTO attachment
-       (owner_kind, question_id, response_id, uploaded_by, media_kind, mime_type,
+       (owner_kind, owner_id, question_id, response_id, uploaded_by, media_kind, mime_type,
         file_name, byte_size, duration_secs, bytes)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      RETURNING id, media_kind, mime_type, file_name, byte_size, duration_secs`,
     [
       ownerKind,
+      ownerId,
       ownerKind === 'question' ? questionId : null,
       ownerKind === 'response' ? responseId : null,
       req.user.id,
@@ -1267,40 +1271,83 @@ router.post('/questions/:id/verdict', requireUser, async (req, res) => {
 
 /* ---------------------------------------------------------- share comments */
 
-// A free-form comment on ANY finished share — games and regular shares alike.
-// Either partner can add one once it's acknowledged/complete (status
-// 'answered'); this never touches an answer or the share itself.
-router.post('/questions/:id/comments', requireUser, async (req, res) => {
+/* ------------------------------------------------------------- comments */
+
+// Permission + a notify closure for commenting on a given target. One place
+// that every commentable thing goes through.
+async function authorizeComment(user, targetType, targetId) {
+  const partner = await partnerOf(user.id);
+  if (targetType === 'question') {
+    const { rows } = await query('SELECT * FROM question WHERE id = $1 AND is_removed = false', [targetId]);
+    const q = rows[0];
+    if (!q) return { status: 404, error: 'Not found.' };
+    if (q.asker_id !== user.id && q.recipient_id !== user.id) return { status: 403, error: "This isn't yours." };
+    if (q.status !== 'answered') return { status: 409, error: 'You can comment once it’s complete.' };
+    const other = q.asker_id === user.id ? q.recipient_id : q.asker_id;
+    return {
+      onCreated: (body) =>
+        notify(other, q.is_spicy ? discreetReply(user.display_name) : { title: `${user.display_name} commented`, body: q.title }),
+    };
+  }
+  if (targetType === 'daily') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetId)) return { status: 400, error: 'Bad day.' };
+    if (!(await dailyRevealed(targetId))) return { status: 409, error: 'Not revealed yet.' };
+    return {
+      onCreated: (body) => partner && notify(partner.id, { title: `${user.display_name} commented on today’s question`, body }),
+    };
+  }
+  if (targetType === 'list') {
+    const { rows } = await query('SELECT id, title FROM list WHERE id = $1 AND is_removed = false', [targetId]);
+    if (!rows[0]) return { status: 404, error: 'List not found.' };
+    return {
+      onCreated: (body) => partner && notify(partner.id, { title: `${user.display_name} commented on “${rows[0].title}”`, body }),
+    };
+  }
+  if (targetType === 'event') {
+    const { rows } = await query('SELECT id, title FROM calendar_event WHERE id = $1 AND is_removed = false', [targetId]);
+    if (!rows[0]) return { status: 404, error: 'Event not found.' };
+    return { onCreated: () => notifyEvent(targetId, asUser(user.id, user.display_name), 'commented', rows[0].title) };
+  }
+  return { status: 400, error: 'Unknown comment target.' };
+}
+
+// Add a comment to anything (share, daily question, list, event, …).
+router.post('/comments', requireUser, async (req, res) => {
+  const targetType = String(req.body?.targetType || '');
+  const targetId = String(req.body?.targetId || '');
   const body = (req.body?.body || '').trim().slice(0, 500);
   if (!body) return res.status(400).json({ error: 'Write a comment.' });
-  const { rows } = await query('SELECT * FROM question WHERE id = $1 AND is_removed = false', [req.params.id]);
-  const q = rows[0];
-  if (!q) return res.status(404).json({ error: 'Not found.' });
-  if (q.asker_id !== req.user.id && q.recipient_id !== req.user.id)
-    return res.status(403).json({ error: "This isn't yours." });
-  if (q.status !== 'answered') return res.status(409).json({ error: 'You can comment once it’s complete.' });
-
+  const auth = await authorizeComment(req.user, targetType, targetId);
+  if (auth.error) return res.status(auth.status).json({ error: auth.error });
   const ins = await query(
-    'INSERT INTO question_comment (question_id, user_id, body) VALUES ($1, $2, $3) RETURNING id, created_at',
-    [q.id, req.user.id, body]
+    'INSERT INTO comment (target_type, target_id, user_id, body) VALUES ($1, $2, $3, $4) RETURNING id, created_at',
+    [targetType, targetId, req.user.id, body]
   );
-  await logActivity(req.user.id, 'commented', 'question', q.id);
-  const other = q.asker_id === req.user.id ? q.recipient_id : q.asker_id;
-  notify(
-    other,
-    q.is_spicy ? discreetReply(req.user.display_name) : { title: `${req.user.display_name} commented`, body: q.title }
-  );
+  await logActivity(req.user.id, 'commented', targetType, targetId);
+  await auth.onCreated?.(body);
   res.status(201).json({
     id: ins.rows[0].id,
     userId: req.user.id,
     userName: req.user.display_name,
     body,
     createdAt: ins.rows[0].created_at,
+    editedAt: null,
   });
 });
 
-// Edit a game comment (author only).
-router.patch('/comments/:id', requireUser, (req, res) => handleCommentEdit('question_comment', req, res));
+// Edit a comment in place (author only).
+router.patch('/comments/:id', requireUser, async (req, res) => {
+  const body = (req.body?.body || '').trim().slice(0, 500);
+  if (!body) return res.status(400).json({ error: 'Write a comment.' });
+  const cur = await query('SELECT user_id FROM comment WHERE id = $1', [req.params.id]);
+  if (!cur.rows[0]) return res.status(404).json({ error: 'Not found.' });
+  if (cur.rows[0].user_id !== req.user.id) return res.status(403).json({ error: 'You can only edit your own comment.' });
+  const upd = await query('UPDATE comment SET body = $1, edited_at = now() WHERE id = $2 RETURNING edited_at', [
+    body,
+    req.params.id,
+  ]);
+  res.json({ id: req.params.id, body, editedAt: upd.rows[0].edited_at });
+});
 
 /* ---------------------------------------------------------------- keepsakes */
 
@@ -1350,26 +1397,6 @@ async function dailyRevealed(day) {
   return rows[0].n >= 2;
 }
 
-// Batch-load reactions/comments for a set of 'YYYY-MM-DD' days.
-async function dailyReactionsFor(days) {
-  if (!days.length) return [];
-  const { rows } = await query(
-    "SELECT to_char(day, 'YYYY-MM-DD') AS day, user_id, emoji FROM daily_reaction WHERE day = ANY($1::date[])",
-    [days]
-  );
-  return rows;
-}
-async function dailyCommentsFor(days) {
-  if (!days.length) return [];
-  const { rows } = await query(
-    `SELECT to_char(c.day, 'YYYY-MM-DD') AS day, c.id, c.user_id, c.body, c.created_at, c.edited_at, u.display_name
-       FROM daily_comment c JOIN app_user u ON u.id = c.user_id
-      WHERE c.day = ANY($1::date[]) ORDER BY c.created_at ASC`,
-    [days]
-  );
-  return rows;
-}
-
 router.get('/daily', requireUser, async (req, res) => {
   const partner = await partnerOf(req.user.id);
   const today = appToday();
@@ -1407,7 +1434,7 @@ router.get('/daily', requireUser, async (req, res) => {
 
   // Once revealed, both can react to and comment on today's question.
   const [reactions, comments] = revealed
-    ? await Promise.all([dailyReactionsFor([today]), dailyCommentsFor([today])])
+    ? await Promise.all([reactionsForTargets('daily', [today]), commentsForTargets('daily', [today])])
     : [[], []];
 
   res.json({
@@ -1420,10 +1447,8 @@ router.get('/daily', requireUser, async (req, res) => {
     partnerName: partner?.display_name || 'them',
     streak,
     recent,
-    reactions: reactions.filter((r) => r.day === today).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
-    comments: comments
-      .filter((c) => c.day === today)
-      .map((c) => ({ id: c.id, userId: c.user_id, userName: c.display_name, body: c.body, createdAt: c.created_at , editedAt: c.edited_at })),
+    reactions: reactions.map((r) => ({ userId: r.user_id, emoji: r.emoji })),
+    comments: comments.map(shapeComment),
   });
 });
 
@@ -1449,18 +1474,18 @@ router.get('/daily/history', requireUser, async (req, res) => {
     .filter(([, m]) => partner && m[req.user.id] !== undefined && m[partner.id] !== undefined)
     .map(([d]) => d);
   const [dReacts, dComments] = await Promise.all([
-    dailyReactionsFor(revealedDays),
-    dailyCommentsFor(revealedDays),
+    reactionsForTargets('daily', revealedDays),
+    commentsForTargets('daily', revealedDays),
   ]);
   const reactsByDay = new Map();
   for (const r of dReacts) {
-    if (!reactsByDay.has(r.day)) reactsByDay.set(r.day, []);
-    reactsByDay.get(r.day).push({ userId: r.user_id, emoji: r.emoji });
+    if (!reactsByDay.has(r.target_id)) reactsByDay.set(r.target_id, []);
+    reactsByDay.get(r.target_id).push({ userId: r.user_id, emoji: r.emoji });
   }
   const commentsByDay = new Map();
   for (const c of dComments) {
-    if (!commentsByDay.has(c.day)) commentsByDay.set(c.day, []);
-    commentsByDay.get(c.day).push({ id: c.id, userId: c.user_id, userName: c.display_name, body: c.body, createdAt: c.created_at , editedAt: c.edited_at });
+    if (!commentsByDay.has(c.target_id)) commentsByDay.set(c.target_id, []);
+    commentsByDay.get(c.target_id).push(shapeComment(c));
   }
 
   const days = [];
@@ -1534,52 +1559,8 @@ router.patch('/daily', requireUser, async (req, res) => {
   res.json({ ok: true });
 });
 
-// React to a day's revealed daily question (toggles, like share reactions).
-router.post('/daily/react', requireUser, async (req, res) => {
-  const day = String(req.body?.day || '');
-  const emoji = req.body?.emoji;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return res.status(400).json({ error: 'Bad day.' });
-  if (!(await dailyRevealed(day))) return res.status(409).json({ error: 'Not revealed yet.' });
-
-  const existing = await query('SELECT emoji FROM daily_reaction WHERE day = $1::date AND user_id = $2', [day, req.user.id]);
-  if (existing.rows[0]?.emoji === emoji) {
-    await query('DELETE FROM daily_reaction WHERE day = $1::date AND user_id = $2', [day, req.user.id]);
-    return res.json({ ok: true, emoji: null });
-  }
-  if (!REACTION_EMOJI.includes(emoji)) return res.status(400).json({ error: 'Unknown reaction.' });
-  await query(
-    `INSERT INTO daily_reaction (day, user_id, emoji) VALUES ($1::date, $2, $3)
-     ON CONFLICT (day, user_id) DO UPDATE SET emoji = EXCLUDED.emoji, created_at = now()`,
-    [day, req.user.id, emoji]
-  );
-  res.json({ ok: true, emoji });
-});
-
-// Comment on a day's revealed daily question. Free-form, unlimited.
-router.post('/daily/comment', requireUser, async (req, res) => {
-  const day = String(req.body?.day || '');
-  const body = (req.body?.body || '').trim().slice(0, 500);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return res.status(400).json({ error: 'Bad day.' });
-  if (!body) return res.status(400).json({ error: 'Write a comment.' });
-  if (!(await dailyRevealed(day))) return res.status(409).json({ error: 'Not revealed yet.' });
-
-  const ins = await query(
-    'INSERT INTO daily_comment (day, user_id, body) VALUES ($1::date, $2, $3) RETURNING id, created_at',
-    [day, req.user.id, body]
-  );
-  const partner = await partnerOf(req.user.id);
-  if (partner) notify(partner.id, { title: `${req.user.display_name} commented on today’s question`, body });
-  res.status(201).json({
-    id: ins.rows[0].id,
-    userId: req.user.id,
-    userName: req.user.display_name,
-    body,
-    createdAt: ins.rows[0].created_at,
-  });
-});
-
-// Edit a daily-question comment (author only).
-router.patch('/daily/comments/:id', requireUser, (req, res) => handleCommentEdit('daily_comment', req, res));
+// (Daily reactions & comments now go through the generic /reactions and
+// /comments endpoints with target_type/kind 'daily' and the day as the id.)
 
 // Played keys + the shared "Knowing You" points total.
 router.get('/games/used', requireUser, async (_req, res) => {
@@ -1679,7 +1660,7 @@ const REACTION_EMOJI = ['❤️', '🔥', '😈', '😂', '🥹', '👀'];
 
 router.post('/reactions', requireUser, async (req, res) => {
   const { targetKind, targetId, emoji } = req.body || {};
-  if (!['question', 'response', 'reveal', 'event', 'thisthat', 'list'].includes(targetKind))
+  if (!['question', 'response', 'reveal', 'event', 'thisthat', 'list', 'daily'].includes(targetKind))
     return res.status(400).json({ error: 'Bad target.' });
 
   // Confirm the target is part of a share you're in, and figure out whether
@@ -1700,6 +1681,9 @@ router.post('/reactions', requireUser, async (req, res) => {
     // Lists are shared; reacting to a list you're in (either partner) is fine.
     const { rows } = await query('SELECT id FROM list WHERE id = $1 AND is_removed = false', [targetId]);
     if (rows[0]) member = true;
+  } else if (targetKind === 'daily') {
+    // The daily question is shared once both have answered that day.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(targetId)) && (await dailyRevealed(String(targetId)))) member = true;
   } else if (targetKind === 'question') {
     const { rows } = await query('SELECT asker_id, recipient_id FROM question WHERE id = $1', [targetId]);
     const q = rows[0];
@@ -1878,17 +1862,10 @@ router.get('/lists', requireUser, async (_req, res) => {
   );
   const listIds = lists.rows.map((l) => l.id);
   // Reactions + comments on the list as a whole (not the items).
-  const reactions = listIds.length
-    ? (await query("SELECT target_id, user_id, emoji FROM reaction WHERE target_kind = 'list' AND target_id = ANY($1::uuid[])", [listIds])).rows
-    : [];
-  const comments = listIds.length
-    ? (await query(
-        `SELECT c.list_id, c.id, c.user_id, c.body, c.created_at, c.edited_at, u.display_name
-           FROM list_comment c JOIN app_user u ON u.id = c.user_id
-          WHERE c.list_id = ANY($1::uuid[]) ORDER BY c.created_at ASC`,
-        [listIds]
-      )).rows
-    : [];
+  const [reactions, comments] = await Promise.all([
+    reactionsForTargets('list', listIds),
+    commentsForTargets('list', listIds),
+  ]);
   res.json(
     lists.rows.map((l) => ({
       id: l.id,
@@ -1908,10 +1885,8 @@ router.get('/lists', requireUser, async (_req, res) => {
           stateBy: i.state_by, // who last toggled it
           stateAt: i.state_at,
         })),
-      reactions: reactions.filter((r) => r.target_id === l.id).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
-      comments: comments
-        .filter((c) => c.list_id === l.id)
-        .map((c) => ({ id: c.id, userId: c.user_id, userName: c.display_name, body: c.body, createdAt: c.created_at , editedAt: c.edited_at })),
+      reactions: reactions.filter((r) => r.target_id === String(l.id)).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
+      comments: commentsOn(comments, l.id),
     }))
   );
 });
@@ -2044,29 +2019,7 @@ router.post('/lists/:id/remove', requireUser, async (req, res) => {
   res.json({ ok: true });
 });
 
-// Comment on a whole list. Free-form, unlimited, either partner.
-router.post('/lists/:id/comments', requireUser, async (req, res) => {
-  const body = (req.body?.body || '').trim().slice(0, 500);
-  if (!body) return res.status(400).json({ error: 'Write a comment.' });
-  const l = await query('SELECT id, title FROM list WHERE id = $1 AND is_removed = false', [req.params.id]);
-  if (!l.rows[0]) return res.status(404).json({ error: 'List not found.' });
-  const ins = await query(
-    'INSERT INTO list_comment (list_id, user_id, body) VALUES ($1, $2, $3) RETURNING id, created_at',
-    [req.params.id, req.user.id, body]
-  );
-  const partner = await partnerOf(req.user.id);
-  if (partner) notify(partner.id, { title: `${req.user.display_name} commented on “${l.rows[0].title}”`, body });
-  res.status(201).json({
-    id: ins.rows[0].id,
-    userId: req.user.id,
-    userName: req.user.display_name,
-    body,
-    createdAt: ins.rows[0].created_at,
-  });
-});
-
-// Edit a list comment (author only).
-router.patch('/list-comments/:id', requireUser, (req, res) => handleCommentEdit('list_comment', req, res));
+// (List comments go through the generic /comments endpoint, target_type 'list'.)
 
 /* -------------------------------------------------------------- calendar */
 
@@ -2089,25 +2042,10 @@ router.get('/calendar', requireUser, async (req, res) => {
       ORDER BY e.starts_at`
   );
   const ids = events.rows.map((e) => e.id);
-  const reactions = ids.length
-    ? (
-        await query(
-          "SELECT user_id, target_id, emoji FROM reaction WHERE target_kind = 'event' AND target_id = ANY($1::uuid[])",
-          [ids]
-        )
-      ).rows
-    : [];
-  const comments = ids.length
-    ? (
-        await query(
-          `SELECT c.id, c.event_id, c.user_id, u.display_name AS user_name, c.body, c.created_at, c.edited_at
-             FROM event_comment c JOIN app_user u ON u.id = c.user_id
-            WHERE c.event_id = ANY($1::uuid[]) AND c.is_removed = false
-            ORDER BY c.created_at`,
-          [ids]
-        )
-      ).rows
-    : [];
+  const [reactions, comments] = await Promise.all([
+    reactionsForTargets('event', ids),
+    commentsForTargets('event', ids),
+  ]);
 
   const shaped = events.rows.map((e) => ({
     id: e.id,
@@ -2121,12 +2059,8 @@ router.get('/calendar', requireUser, async (req, res) => {
     createdAt: e.created_at,
     updatedBy: asUser(e.updated_by, e.updated_name),
     updatedAt: e.updated_at,
-    reactions: reactions
-      .filter((r) => r.target_id === e.id)
-      .map((r) => ({ userId: r.user_id, emoji: r.emoji })),
-    comments: comments
-      .filter((c) => c.event_id === e.id)
-      .map((c) => ({ id: c.id, userId: c.user_id, userName: c.user_name, body: c.body, createdAt: c.created_at, editedAt: c.edited_at })),
+    reactions: reactions.filter((r) => r.target_id === String(e.id)).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
+    comments: commentsOn(comments, e.id),
   }));
 
   const notes = await query(
@@ -2260,24 +2194,8 @@ router.post('/calendar/events/:id/remove', requireUser, async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post('/calendar/events/:id/comments', requireUser, async (req, res) => {
-  const body = (req.body?.body || '').trim();
-  if (!body) return res.status(400).json({ error: 'Say something first.' });
-  const { rows } = await query('SELECT id, title FROM calendar_event WHERE id = $1 AND is_removed = false', [
-    req.params.id,
-  ]);
-  const ev = rows[0];
-  if (!ev) return res.status(404).json({ error: 'Event not found.' });
-  const inserted = await query(
-    'INSERT INTO event_comment (event_id, user_id, body) VALUES ($1, $2, $3) RETURNING id',
-    [req.params.id, req.user.id, body]
-  );
-  await notifyEvent(ev.id, asUser(req.user.id, req.user.display_name), 'commented', ev.title);
-  res.status(201).json({ id: inserted.rows[0].id });
-});
-
-// Edit an event comment (author only).
-router.patch('/calendar/comments/:id', requireUser, (req, res) => handleCommentEdit('event_comment', req, res));
+// (Event comments go through the generic /comments endpoint, target_type
+// 'event' — which also fires the calendar "commented" notification.)
 
 router.post('/calendar/notifications/:id/ack', requireUser, async (req, res) => {
   await query(

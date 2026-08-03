@@ -119,7 +119,7 @@ async function shareCounts(id) {
     gamePoints: await one('SELECT count(*)::int n FROM game_points WHERE question_id=$1', [id]),
     attachments: await one('SELECT count(*)::int n FROM attachment WHERE question_id=$1 OR response_id = ANY($2::uuid[])', [id, respIds]),
     reactions: await one(
-      "SELECT count(*)::int n FROM reaction WHERE (target_kind IN ('question','reveal','thisthat') AND target_id=$1) OR (target_kind='response' AND target_id = ANY($2::uuid[]))",
+      "SELECT count(*)::int n FROM reaction WHERE (target_kind IN ('question','reveal','thisthat') AND target_id=$1) OR (target_kind='response' AND target_id = ANY($2::text[]))",
       [id, respIds]
     ),
     versions: await one('SELECT count(*)::int n FROM question_version WHERE question_id=$1', [id]),
@@ -220,7 +220,7 @@ router.get('/event/:id', async (req, res) => {
   const nameOf = (uid) => users.find((u) => u.id === uid)?.display_name || `#${uid}`;
   const comments = (
     await query(
-      'SELECT body, user_id, to_char(created_at, \'Mon DD\') AS at FROM event_comment WHERE event_id = $1 AND is_removed = false ORDER BY created_at',
+      "SELECT body, user_id, to_char(created_at, 'Mon DD') AS at FROM comment WHERE target_type = 'event' AND target_id = $1 ORDER BY created_at",
       [req.params.id]
     )
   ).rows.map((c) => ({ name: nameOf(c.user_id), body: c.body, at: c.at }));
@@ -256,7 +256,7 @@ router.delete('/share/:id', async (req, res) => {
     await client.query('BEGIN');
     const respIds = (await client.query('SELECT id FROM response WHERE question_id = $1', [id])).rows.map((r) => r.id);
     await client.query(
-      "DELETE FROM reaction WHERE (target_kind IN ('question','reveal','thisthat') AND target_id=$1) OR (target_kind='response' AND target_id = ANY($2::uuid[]))",
+      "DELETE FROM reaction WHERE (target_kind IN ('question','reveal','thisthat') AND target_id=$1) OR (target_kind='response' AND target_id = ANY($2::text[]))",
       [id, respIds]
     );
     await client.query('DELETE FROM attachment WHERE question_id=$1 OR response_id = ANY($2::uuid[])', [id, respIds]);
@@ -264,7 +264,8 @@ router.delete('/share/:id', async (req, res) => {
     await client.query('DELETE FROM thisthat_answer WHERE question_id=$1', [id]);
     await client.query('DELETE FROM thisthat_item WHERE question_id=$1', [id]);
     await client.query('DELETE FROM keepsake WHERE question_id=$1', [id]);
-    await client.query('DELETE FROM question_comment WHERE question_id=$1', [id]);
+    await client.query("DELETE FROM comment WHERE target_type='question' AND target_id=$1", [id]);
+    await client.query('DELETE FROM question_comment WHERE question_id=$1', [id]); // legacy backup table
     await client.query('DELETE FROM game_points WHERE question_id=$1', [id]);
     await client.query('DELETE FROM response_version WHERE response_id = ANY($1::uuid[])', [respIds]);
     await client.query('DELETE FROM response WHERE question_id=$1', [id]);
@@ -298,8 +299,10 @@ router.delete('/daily', async (req, res) => {
   } else {
     // Whole day: clear its answers and any reactions/comments on it.
     result = await query('DELETE FROM daily_answer WHERE day = $1::date', [day]);
-    await query('DELETE FROM daily_reaction WHERE day = $1::date', [day]);
-    await query('DELETE FROM daily_comment WHERE day = $1::date', [day]);
+    await query("DELETE FROM reaction WHERE target_kind='daily' AND target_id=$1", [day]);
+    await query("DELETE FROM comment WHERE target_type='daily' AND target_id=$1", [day]);
+    await query('DELETE FROM daily_reaction WHERE day = $1::date', [day]); // legacy backup
+    await query('DELETE FROM daily_comment WHERE day = $1::date', [day]); // legacy backup
   }
   await logAdmin('delete_daily', day, { userId, deleted: result.rowCount });
   res.json({ ok: true, deleted: result.rowCount });
@@ -312,7 +315,7 @@ router.delete('/event/:id', async (req, res) => {
   const { rows } = await query('SELECT id, title FROM calendar_event WHERE id = $1', [id]);
   if (!rows[0]) return res.status(404).json({ error: 'Not found.' });
   const counts = {
-    comments: (await query('SELECT count(*)::int n FROM event_comment WHERE event_id=$1', [id])).rows[0].n,
+    comments: (await query("SELECT count(*)::int n FROM comment WHERE target_type='event' AND target_id=$1", [id])).rows[0].n,
     reactions: (await query("SELECT count(*)::int n FROM reaction WHERE target_kind='event' AND target_id=$1", [id])).rows[0].n,
   };
   const client = await pool.connect();
@@ -320,7 +323,8 @@ router.delete('/event/:id', async (req, res) => {
     await client.query('BEGIN');
     await client.query('UPDATE couple_state SET countdown_event_id = NULL WHERE countdown_event_id = $1', [id]);
     await client.query("DELETE FROM reaction WHERE target_kind='event' AND target_id=$1", [id]);
-    await client.query('DELETE FROM event_comment WHERE event_id=$1', [id]);
+    await client.query("DELETE FROM comment WHERE target_type='event' AND target_id=$1", [id]);
+    await client.query('DELETE FROM event_comment WHERE event_id=$1', [id]); // legacy backup
     await client.query('DELETE FROM event_notification WHERE event_id=$1', [id]);
     await client.query('DELETE FROM calendar_event WHERE id=$1', [id]);
     await client.query('COMMIT');

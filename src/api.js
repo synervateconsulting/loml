@@ -50,13 +50,10 @@ export const api = {
   // guess: partner submits their guess via the reveal endpoint (revealAnswer); author judges here
   judgeGuess: (id, verdict) => request('POST', `/questions/${id}/verdict`, { verdict }),
   toggleKeepsake: (id) => request('POST', `/questions/${id}/keepsake`),
+  // One reaction + comment API for everything (share, daily, list, event, …).
   react: (targetKind, targetId, emoji) => request('POST', '/reactions', { targetKind, targetId, emoji }),
-  // Free-form comment on a completed game; returns the created comment.
-  commentShare: (id, body) => request('POST', `/questions/${id}/comments`, { body }),
+  comment: (targetType, targetId, body) => request('POST', '/comments', { targetType, targetId, body }),
   editComment: (id, body) => request('PATCH', `/comments/${id}`, { body }),
-  dailyReact: (day, emoji) => request('POST', '/daily/react', { day, emoji }),
-  dailyComment: (day, body) => request('POST', '/daily/comment', { day, body }),
-  editDailyComment: (id, body) => request('PATCH', `/daily/comments/${id}`, { body }),
   markSeen: (kind, id) => request('POST', '/seen', { kind, id }),
   couple: () => request('GET', '/couple'),
   gamesUsed: () => request('GET', '/games/used'),
@@ -76,16 +73,12 @@ export const api = {
   updateList: (id, fields) => request('PATCH', `/lists/${id}`, fields),
   toggleListItem: (id) => request('POST', `/list-items/${id}/toggle`),
   removeList: (id) => request('POST', `/lists/${id}/remove`),
-  commentList: (id, body) => request('POST', `/lists/${id}/comments`, { body }),
-  editListComment: (id, body) => request('PATCH', `/list-comments/${id}`, { body }),
   removeAttachment: (id) => request('POST', `/attachments/${id}/remove`),
   history: (questionId) => request('GET', `/questions/${questionId}/history`),
   calendar: () => request('GET', '/calendar'),
   createEvent: (fields) => request('POST', '/calendar/events', fields),
   editEvent: (id, fields) => request('PATCH', `/calendar/events/${id}`, fields),
   removeEvent: (id) => request('POST', `/calendar/events/${id}/remove`),
-  commentEvent: (id, body) => request('POST', `/calendar/events/${id}/comments`, { body }),
-  editEventComment: (id, body) => request('PATCH', `/calendar/comments/${id}`, { body }),
   // Date requests
   createDateRequest: (fields) => request('POST', '/date-requests', fields),
   acceptDateRequest: (id, fields) => request('POST', `/date-requests/${id}/accept`, fields),

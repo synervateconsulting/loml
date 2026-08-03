@@ -60,18 +60,17 @@ export function DailyHistory({ meId }) {
                       reactions={d.reactions || []}
                       meId={meId}
                       canReact
-                      onReact={(emoji) => api.dailyReact(d.day, emoji)}
                       onChanged={refresh}
                     />
                     <CommentThread
                       comments={d.comments || []}
                       meId={meId}
                       onSubmit={async (body) => {
-                        const c = await api.dailyComment(d.day, body);
+                        const c = await api.comment('daily', d.day, body);
                         refresh();
                         return c;
                       }}
-                      onEdit={(id, body) => api.editDailyComment(id, body)}
+                      onEdit={(id, body) => api.editComment(id, body)}
                     />
                   </>
                 )}
@@ -241,18 +240,17 @@ export function DailyModal({ daily, meId, onClose, onAnswered, onRefresh }) {
         reactions={daily.reactions || []}
         meId={meId}
         canReact
-        onReact={(emoji) => api.dailyReact(daily.today, emoji)}
         onChanged={onRefresh}
       />
       <CommentThread
         comments={daily.comments || []}
         meId={meId}
         onSubmit={async (body) => {
-          const c = await api.dailyComment(daily.today, body);
+          const c = await api.comment('daily', daily.today, body);
           onRefresh?.();
           return c;
         }}
-        onEdit={(id, body) => api.editDailyComment(id, body)}
+        onEdit={(id, body) => api.editComment(id, body)}
       />
 
       {daily.recent?.length > 0 && (

@@ -167,11 +167,11 @@ export default function ListsView({ meId, users = {} }) {
                 comments={l.comments || []}
                 meId={meId}
                 onSubmit={async (body) => {
-                  const c = await api.commentList(l.id, body);
+                  const c = await api.comment('list', l.id, body);
                   load();
                   return c;
                 }}
-                onEdit={(id, body) => api.editListComment(id, body)}
+                onEdit={(id, body) => api.editComment(id, body)}
               />
             </div>
           </section>
