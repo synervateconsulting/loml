@@ -13,6 +13,7 @@ import {
   SCORE_LEGEND,
   computeDailyScore,
   computeCouponScore,
+  computeBingoScore,
   knowingTotal,
 } from './scoring.js';
 import {
@@ -1338,6 +1339,11 @@ async function authorizeComment(user, targetType, targetId) {
     if (!(await checkinRevealed(targetId))) return { status: 409, error: 'You can comment once it’s revealed.' };
     return { onCreated: (body) => partner && notify(partner.id, { title: `${user.display_name} commented on your check-in`, body }) };
   }
+  if (targetType === 'bingo') {
+    const { rows } = await query('SELECT id FROM bingo_board WHERE id = $1 AND is_removed = false', [targetId]);
+    if (!rows[0]) return { status: 404, error: 'Not found.' };
+    return { onCreated: (body) => partner && notify(partner.id, { title: `${user.display_name} commented on a bingo board`, body }) };
+  }
   return { status: 400, error: 'Unknown comment target.' };
 }
 
@@ -1858,7 +1864,7 @@ router.get('/games/score', requireUser, async (_req, res) => {
   // scored only once both people have answered (status flips to 'answered'); a
   // guess is scored only once the author judges it; a deck scores once both
   // have answered it.
-  const [predictOpen, guessUnjudged, revealOpen, daily, coupons] = await Promise.all([
+  const [predictOpen, guessUnjudged, revealOpen, daily, coupons, bingo] = await Promise.all([
     query(
       "SELECT count(*)::int AS n FROM question WHERE kind = 'predict' AND is_removed = false AND status <> 'answered'"
     ),
@@ -1872,14 +1878,16 @@ router.get('/games/score', requireUser, async (_req, res) => {
     ),
     computeDailyScore(),
     computeCouponScore(),
+    computeBingoScore(),
   ]);
 
   const gamesTotal = entries.reduce((sum, e) => sum + e.points, 0);
   res.json({
-    total: gamesTotal + daily.points + coupons.points,
+    total: gamesTotal + daily.points + coupons.points + bingo.points,
     entries,
     daily,
     coupons,
+    bingo,
     legend: SCORE_LEGEND,
     pending: {
       predictAwaitingReveal: predictOpen.rows[0].n,
@@ -1895,7 +1903,7 @@ const REACTION_EMOJI = ['❤️', '🔥', '😈', '😂', '🥹', '👀'];
 
 router.post('/reactions', requireUser, async (req, res) => {
   const { targetKind, targetId, emoji } = req.body || {};
-  if (!['question', 'response', 'reveal', 'event', 'thisthat', 'list', 'daily', 'coupon', 'gratitude', 'checkin'].includes(targetKind))
+  if (!['question', 'response', 'reveal', 'event', 'thisthat', 'list', 'daily', 'coupon', 'gratitude', 'checkin', 'bingo'].includes(targetKind))
     return res.status(400).json({ error: 'Bad target.' });
 
   // Confirm the target is part of a share you're in, and figure out whether
@@ -1927,6 +1935,9 @@ router.post('/reactions', requireUser, async (req, res) => {
     if (rows[0] && (rows[0].from_id === req.user.id || rows[0].to_id === req.user.id)) member = true;
   } else if (targetKind === 'checkin') {
     if (await checkinRevealed(targetId)) member = true;
+  } else if (targetKind === 'bingo') {
+    const { rows } = await query('SELECT id FROM bingo_board WHERE id = $1 AND is_removed = false', [targetId]);
+    if (rows[0]) member = true;
   } else if (targetKind === 'question') {
     const { rows } = await query('SELECT asker_id, recipient_id FROM question WHERE id = $1', [targetId]);
     const q = rows[0];
@@ -2620,6 +2631,113 @@ router.post('/coupons/:id/revoke', requireUser, async (req, res) => {
   if (c.from_id !== req.user.id) return res.status(403).json({ error: 'Only the giver can take it back.' });
   await query("UPDATE coupon SET status = 'revoked', is_removed = true WHERE id = $1", [c.id]);
   notify(c.to_id, { title: `${req.user.display_name} took back a coupon`, body: c.title });
+  res.json({ ok: true });
+});
+
+/* ------------------------------------------------------------- bingo */
+
+// Any full line, and whether the whole card is done, for a set of done squares.
+function bingoStatus(size, doneSet) {
+  const at = (r, c) => r * size + c;
+  let anyLine = false;
+  for (let r = 0; r < size; r++) if ([...Array(size).keys()].every((c) => doneSet.has(at(r, c)))) anyLine = true;
+  for (let c = 0; c < size; c++) if ([...Array(size).keys()].every((r) => doneSet.has(at(r, c)))) anyLine = true;
+  if ([...Array(size).keys()].every((i) => doneSet.has(at(i, i)))) anyLine = true;
+  if ([...Array(size).keys()].every((i) => doneSet.has(at(i, size - 1 - i)))) anyLine = true;
+  return { anyLine, full: doneSet.size >= size * size };
+}
+
+router.get('/bingo', requireUser, async (_req, res) => {
+  const boards = await query(
+    `SELECT id, title, size, created_by, awarded_row, awarded_full, created_at
+       FROM bingo_board WHERE is_removed = false ORDER BY created_at DESC`
+  );
+  const bIds = boards.rows.map((b) => b.id);
+  const squares = bIds.length
+    ? (await query('SELECT id, board_id, position, text, done_by, done_at FROM bingo_square WHERE board_id = ANY($1::uuid[]) ORDER BY position', [bIds])).rows
+    : [];
+  const [reactions, comments] = await Promise.all([reactionsForTargets('bingo', bIds), commentsForTargets('bingo', bIds)]);
+  res.json(
+    boards.rows.map((b) => ({
+      id: b.id,
+      title: b.title,
+      size: b.size,
+      createdBy: b.created_by,
+      awardedRow: b.awarded_row,
+      awardedFull: b.awarded_full,
+      createdAt: b.created_at,
+      squares: squares
+        .filter((s) => s.board_id === b.id)
+        .map((s) => ({ id: s.id, position: s.position, text: s.text, doneBy: s.done_by, doneAt: s.done_at })),
+      reactions: reactions.filter((r) => r.target_id === String(b.id)).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
+      comments: commentsOn(comments, b.id),
+    }))
+  );
+});
+
+router.post('/bingo', requireUser, async (req, res) => {
+  const title = (req.body?.title || '').trim().slice(0, 120);
+  if (!title) return res.status(400).json({ error: 'Name the board.' });
+  const size = [3, 5].includes(Number(req.body?.size)) ? Number(req.body.size) : 5;
+  const usedKey = (req.body?.usedKey || '').trim().slice(0, 120);
+  const squares = (Array.isArray(req.body?.squares) ? req.body.squares : []).map((t) => String(t || '').trim().slice(0, 120));
+  if (squares.length !== size * size || squares.some((t) => !t))
+    return res.status(400).json({ error: `Give all ${size * size} squares.` });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query('INSERT INTO bingo_board (title, size, created_by) VALUES ($1, $2, $3) RETURNING id', [
+      title,
+      size,
+      req.user.id,
+    ]);
+    const id = rows[0].id;
+    for (let i = 0; i < squares.length; i++)
+      await client.query('INSERT INTO bingo_square (board_id, position, text) VALUES ($1, $2, $3)', [id, i, squares[i]]);
+    await client.query('COMMIT');
+    if (usedKey)
+      await query('INSERT INTO game_used (game_key, used_by) VALUES ($1, $2) ON CONFLICT (game_key) DO NOTHING', [usedKey, req.user.id]);
+    await logActivity(req.user.id, 'made_bingo', 'bingo', id, { title });
+    const partner = await partnerOf(req.user.id);
+    if (partner) notify(partner.id, { title: `${req.user.display_name} started a bingo board`, body: title });
+    res.status(201).json({ id });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/bingo/squares/:id/toggle', requireUser, async (req, res) => {
+  const { rows } = await query(
+    `SELECT s.id, s.done_at, b.id AS board_id, b.size, b.awarded_row, b.awarded_full, b.is_removed
+       FROM bingo_square s JOIN bingo_board b ON b.id = s.board_id WHERE s.id = $1`,
+    [req.params.id]
+  );
+  const sq = rows[0];
+  if (!sq || sq.is_removed) return res.status(404).json({ error: 'Not found.' });
+  const next = !sq.done_at;
+  if (next) await query('UPDATE bingo_square SET done_by = $1, done_at = now() WHERE id = $2', [req.user.id, sq.id]);
+  else await query('UPDATE bingo_square SET done_by = NULL, done_at = NULL WHERE id = $1', [sq.id]);
+
+  const done = await query('SELECT position FROM bingo_square WHERE board_id = $1 AND done_at IS NOT NULL', [sq.board_id]);
+  const { anyLine, full } = bingoStatus(sq.size, new Set(done.rows.map((r) => r.position)));
+  let newLine = false;
+  let newFull = false;
+  if (anyLine && !sq.awarded_row) {
+    await query('UPDATE bingo_board SET awarded_row = true WHERE id = $1', [sq.board_id]);
+    newLine = true;
+  }
+  if (full && !sq.awarded_full) {
+    await query('UPDATE bingo_board SET awarded_full = true WHERE id = $1', [sq.board_id]);
+    newFull = true;
+  }
+  res.json({ ok: true, isDone: next, newLine, newFull });
+});
+
+router.post('/bingo/:id/remove', requireUser, async (req, res) => {
+  await query('UPDATE bingo_board SET is_removed = true WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 });
 

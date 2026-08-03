@@ -26,6 +26,9 @@ export const SCORE_WEIGHTS = {
 
 // Redeeming a coupon (following through on a favor) is worth a flat amount.
 export const COUPON_POINTS = 5;
+// Bingo: a completed line is worth this, a full card five times that.
+export const BINGO_ROW_POINTS = 5;
+export const BINGO_FULL_POINTS = 25;
 
 // Daily question: each day you BOTH answer is worth more than the last, so a
 // long streak compounds. Worth = base + (streakDay - 1) * step, capped.
@@ -76,6 +79,7 @@ export const SCORE_LEGEND = [
     detail: `+${DAILY_BASE} and climbing each day you both answer — longer streak, more per day (up to +${DAILY_CAP})`,
   },
   { key: 'coupon', label: 'Coupons', detail: `+${COUPON_POINTS} for each coupon redeemed` },
+  { key: 'bingo', label: 'Bingo', detail: `+${BINGO_ROW_POINTS} for a line, +${BINGO_FULL_POINTS} for a full card` },
 ];
 
 // Couple-wide coupon points: a flat amount per redeemed coupon.
@@ -85,6 +89,16 @@ export async function computeCouponScore() {
   );
   const count = rows[0].n;
   return { points: count * COUPON_POINTS, count };
+}
+
+// Bingo points: +row for each board that hit a line, +full for each blackout.
+export async function computeBingoScore() {
+  const { rows } = await query(
+    'SELECT count(*) FILTER (WHERE awarded_row)::int AS lines, count(*) FILTER (WHERE awarded_full)::int AS full FROM bingo_board WHERE is_removed = false'
+  );
+  const lines = rows[0].lines;
+  const full = rows[0].full;
+  return { points: lines * BINGO_ROW_POINTS + full * BINGO_FULL_POINTS, lines, full };
 }
 
 // One day apart? Compares two 'YYYY-MM-DD' strings by calendar days (UTC-safe).
@@ -133,12 +147,13 @@ export async function computeDailyScore() {
 
 // The grand total shown on the brain meter: all game points + daily points.
 export async function knowingTotal() {
-  const [gp, daily, coupons] = await Promise.all([
+  const [gp, daily, coupons, bingo] = await Promise.all([
     query('SELECT COALESCE(SUM(points), 0)::int AS total FROM game_points'),
     computeDailyScore(),
     computeCouponScore(),
+    computeBingoScore(),
   ]);
-  return gp.rows[0].total + daily.points + coupons.points;
+  return gp.rows[0].total + daily.points + coupons.points + bingo.points;
 }
 
 // Recompute every game's points from the current weights on boot. This is what

@@ -2943,3 +2943,114 @@ body::before {
   color: var(--cream);
   font-weight: 600;
 }
+
+/* couple bingo ------------------------------------------------------------- */
+.bingos {
+  position: relative;
+}
+.bingoflash {
+  position: sticky;
+  top: 8px;
+  z-index: 5;
+  margin: 0 auto 10px;
+  width: fit-content;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: var(--candle);
+  color: #2a1a05;
+  font: 700 14px var(--body);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  animation: bingopop 0.25s ease-out;
+}
+@keyframes bingopop {
+  from { transform: scale(0.8); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+.bingo {
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+.bingo__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.bingo__title {
+  margin: 0;
+  font: 600 15px var(--body);
+}
+.bingo__badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.bingo__badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(240, 178, 107, 0.18);
+  color: var(--candle);
+  font: 700 11px var(--body);
+  white-space: nowrap;
+}
+.bingo__badge--full {
+  background: var(--candle);
+  color: #2a1a05;
+}
+.bingo__grid {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.bingo__grid--3 { grid-template-columns: repeat(3, 1fr); }
+.bingo__grid--5 { grid-template-columns: repeat(5, 1fr); }
+.bingo__cell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: var(--night);
+  color: var(--cream);
+  text-align: center;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.08s;
+}
+.bingo__cell:active {
+  transform: scale(0.96);
+}
+.bingo__cellText {
+  font-size: 11px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.bingo__grid--5 .bingo__cellText {
+  font-size: 9.5px;
+}
+.bingo__cell.is-done {
+  background: rgba(232, 135, 155, 0.22);
+  border-color: var(--rose);
+}
+.bingo__cell.is-win {
+  background: rgba(240, 178, 107, 0.28);
+  border-color: var(--candle);
+}
+.bingo__check {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  font-size: 11px;
+  color: var(--candle);
+}
+.bingo__social {
+  border-top: 1px solid var(--edge);
+  padding-top: 8px;
+}

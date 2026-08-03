@@ -585,3 +585,25 @@ CREATE TABLE IF NOT EXISTS checkin_answer (
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (checkin_id, user_id, prompt_key)
 );
+
+-- Couple bingo. A completed line awards +5 (once per board), a full card +25
+-- (once) — tracked by the awarded flags. Squares record who marked them.
+CREATE TABLE IF NOT EXISTS bingo_board (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title         TEXT NOT NULL,
+  size          INTEGER NOT NULL DEFAULT 5,
+  created_by    INTEGER REFERENCES app_user(id),
+  awarded_row   BOOLEAN NOT NULL DEFAULT false,
+  awarded_full  BOOLEAN NOT NULL DEFAULT false,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  is_removed    BOOLEAN NOT NULL DEFAULT false
+);
+CREATE TABLE IF NOT EXISTS bingo_square (
+  id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  board_id  UUID NOT NULL REFERENCES bingo_board(id),
+  position  INTEGER NOT NULL,
+  text      TEXT NOT NULL,
+  done_by   INTEGER REFERENCES app_user(id),
+  done_at   TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS bingo_square_board_idx ON bingo_square (board_id);
